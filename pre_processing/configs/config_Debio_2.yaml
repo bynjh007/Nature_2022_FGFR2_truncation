@@ -1,0 +1,22 @@
+
+samples: '/DATA/projects/j.bhin/Daniel_FGFR2/TCGA/RNA/pipeline/samples.Debio.csv'
+
+################################################################################
+# Path configuration                                                           
+################################################################################
+
+path:
+    default: '/DATA/projects/j.bhin/Daniel_FGFR2/PDX_Debio/chimMultimapNmax_0'
+
+
+star_fusion:
+    reflib: '/DATA/projects/j.bhin/reference/GRCh38_gencode_v32_CTAT_lib_Dec062019.plug-n-play/ctat_genome_lib_build_dir'
+    threads: 1 # threads setting seems not to be meaningful because star-fusion runs with intermediate file from star
+    options:
+        - --examine_coding_effect
+
+        # To use trinity and fusioninspector, star-fusion have to be run from fastq file
+        # - --denovo_reconstruct
+        # - --FusionInspector validate
+
+

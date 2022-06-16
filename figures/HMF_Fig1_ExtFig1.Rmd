@@ -1,0 +1,304 @@
+---
+title: "HMF Fig1 & Ext_Fig1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraries
+```{r}
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+library(ggplot2)
+library(tidyr)
+```
+
+# Pre-processd data
+```{r}
+FGFR2_SV_PURPLE_ALL = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_purple.RData")[["FGFR2_PURPLE_ALL"]]
+FGFR2_SV_LINX_ALL = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_purple.RData")[["FGFR2_LINX_ALL"]]
+FGFR2_SV_LIST_ALL = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_purple.RData")[["FGFR2_SV"]]
+FGFR2_SV_N_ALL = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_purple.RData")[["FGFR2_SV_n"]]
+SAMPLE_LIST_ALL = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_purple.RData")[["target_samp"]]
+
+FGFR2_SV_PURPLE_RNA = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["FGFR2_PURPLE_ALL"]]
+FGFR2_SV_LINX_RNA = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["FGFR2_LINX_ALL"]]
+FGFR2_SV_LIST_RNA = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["FGFR2_SV"]]
+FGFR2_SV_N_RNA = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["FGFR2_SV_n"]]
+SAMPLE_LIST_RNA = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["target_in_linx"]]
+FGFR2_PARTIAL_AMP = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_partial_amp.RData")[["samp_with_brkpt_I17"]]
+
+hg38_info = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["hg38_info"]]
+hg19_info = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_SV_RNA.RData")[["hg19_info"]]
+
+# Sample information
+target_samp = unique(FGFR2_SV_PURPLE_ALL %>% pull(sample_name))
+
+# sample information
+samp_info_meta = read.table("~/FGFR/Daniel/R/Nature_figures/data/HMF/metadata.tsv", sep = "\t", stringsAsFactors = F, header = T, comment.char = "")
+samp_info_target = samp_info_meta[match(target_samp, samp_info_meta$setName),]
+
+# FGFR2 CNV
+FGFR2_CNV = readRDS("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_cnv.RDS")
+
+```
+
+# Fig 1f
+Locations of SVs in FGFR2  
+```{r, fig.width8, fig.height = 4}
+TXID = hg19_info$trx_gene_AA_major %>% filter(SYMBOL == "FGFR2") %>% pull(TXID)
+
+ind = as.numeric(TXID)
+t_exon = hg19_info$trx_exon[[ind]]
+t_intron = hg19_info$trx_intron[[ind]]
+t_str = unique(as.character(strand(t_exon)))
+
+if(t_str == "-"){
+  t_intron = rev(t_intron)
+}
+
+df1 = data.frame(data.frame(t_exon)[, c(1,2,3,5)], id = paste("Exon", 1:length(t_exon)))
+df2 = rbind(data.frame(data.frame(t_intron)[, c(1,2,3,5)], id = paste("Intron", 1:length(t_intron))), NA)
+df_comb = (gdata::interleave(df1, df2))
+df_comb = df_comb[-nrow(df_comb),]
+df_comb$width = df_comb$end - df_comb$start
+
+a = df_comb$start - 123237843
+b = df_comb$end - 123237843
+
+range_lab = rep("", max(c(a,b)))
+for(i in 1:length(a)){
+  range_lab[a[i]] = as.character(df_comb$id[i])
+}
+
+FGFR2_SV_brkpt = FGFR2_SV_PURPLE_ALL %>%
+    mutate(FGFR2_brkpt = ifelse(up.gene_symbol == "FGFR2", up.start, down.start),
+           FGFR2_brkpt_ori = ifelse(up.gene_symbol == "FGFR2", up.orientation, down.orientation),
+           Sample_ID = samp_info_meta$sampleId[match(sample_name, samp_info_meta$setName)]) %>% 
+    select(FGFR2_brkpt, FGFR2_brkpt_ori, Sample_ID)
+
+# first eleent: 3'-end (end) of the transcript, last element: 5'-end (start) of transcript
+brkpt_1 = as.numeric(c(1:max(c(a,b))) %in% (FGFR2_SV_brkpt$FGFR2_brkpt[FGFR2_SV_brkpt$FGFR2_brkpt_ori==1] - 123237843))
+brkpt_2 = as.numeric(c(1:max(c(a,b))) %in% (FGFR2_SV_brkpt$FGFR2_brkpt[FGFR2_SV_brkpt$FGFR2_brkpt_ori==(-1)] - 123237843))
+brkpt = as.numeric(as.logical(brkpt_1 + brkpt_2))
+
+at_tick = c(which(range_lab != ""), max(c(a,b)))
+at_tick_label = rev(as.character(df_comb$id))
+at_tick_label[grepl("Intron", at_tick_label)] = ""
+at_tick_label_pos = c()
+for(i in 1:(length(at_tick)-1)){
+  at_tick_label_pos = c(at_tick_label_pos,  (at_tick[i] + at_tick[i+1])/2)
+}
+
+barplot(brkpt, space = 0, axes = FALSE, border = "blue") 
+axis(side = 1, at = at_tick - 1, labels = FALSE)
+axis(side = 1, at = at_tick_label_pos, tick = FALSE, labels = at_tick_label, las = 2, cex.axis = 0.3)
+
+bin_size = 500
+a = rep(NA, length(brkpt))
+for(i in 1:length(brkpt)){
+  a[i] = sum(brkpt[i:(bin_size+i)])
+}
+Fig1f = barplot(a)
+
+df_Fig1f = FGFR2_SV_brkpt[, c(1,3)]
+```
+
+# Ext Fig 1f 
+Unit-level normalization of all SVs in FGFR2  
+```{r, fig.width = 8, fig.height = 6}
+t = numeric(nrow(df_comb))
+for(i in 1:nrow(FGFR2_SV_brkpt)){
+  t = t + as.numeric(df_comb$start<=FGFR2_SV_brkpt$FGFR2_brkpt[i] & df_comb$end>=FGFR2_SV_brkpt$FGFR2_brkpt[i])
+}
+df_comb$n = t
+df_comb$n_kb = (1000*df_comb$n)/(df_comb$width*length(unique(FGFR2_SV_PURPLE_ALL$sample_name)))
+
+# binomial test
+prob_bino = df_comb$width/sum(df_comb$width)
+pval_bino = numeric(nrow(df_comb))
+for(i in 1:length(prob_bino)){
+  t = binom.test(x = df_comb$n[i], n = sum(df_comb$n), p = prob_bino[i], alternative = "greater")
+  pval_bino[i] = t$p.value
+}
+
+df_sv_bar = data.frame(lab = df_comb$id, n_kb = df_comb$n_kb, pval = -log10(pval_bino))
+df_sv_bar_along = gather(df_sv_bar, key="measure", value="value", c("n_kb", "pval"))
+df_sv_bar_along$lab = factor(df_sv_bar_along$lab, levels = df_sv_bar$lab)
+
+Ext_Fig1f = ggplot(df_sv_bar_along, aes(x=lab, y=value)) + geom_bar(stat='identity')+
+  facet_wrap(~measure,  ncol=1, scales = "free") + theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+Ext_Fig1f
+df_ExtFig1f = df_sv_bar
+```
+
+# Ext Fig 1g
+FGFR2 RE complexities across the FGFR2 CN level  
+```{r, fig.width = 10, fig.height = 7}
+# pre-processed data loading
+load("~/FGFR/Daniel/R/Nature_figures/data/HMF/HMF_data_samples_filtering.RData")
+
+# copy number status
+trans = function(x){pmin(x, 10) + 0.015*pmax(x-15, 0)}
+
+t_id = unique(df_CN_samp$sample_name)
+t_cnv = FGFR2_CNV[match(t_id, rownames(FGFR2_CNV)),]
+t_samp = FGFR2_PARTIAL_AMP %>% filter(E1_E17>5, CN_diff>2) %>% pull(sample_id) # PARTIAL AMP
+df = data.frame(sample_name = substr(t_id, 1, 12), t_cnv) %>%
+    mutate(FGFR2_amp = ifelse(FGFR2_CN>=5, "Full Amp", NA),
+           FGFR2_amp = ifelse(t_id %in% (samp_info_target %>% filter(setName %in% t_samp) %>% pull(sampleId)), "Partial Amp", FGFR2_amp)) %>% 
+    arrange(desc(FGFR2_CN)) %>% 
+    mutate(sample_name = factor(sample_name, levels = sample_name),FGFR2_CN_rescale = trans(FGFR2_CN)) 
+
+yticks = c(0,2,4,6, 8, 10, 20, 100, 300, 600)
+p_cn = ggplot(df, aes(x = sample_name, y= FGFR2_CN_rescale)) + geom_bar(stat = "identity") + theme_classic() +
+  geom_rect(aes(xmin = 0, xmax = 7, ymin = 10, ymax = 10.5), fill = "white") + 
+  scale_y_continuous(limits = c(0, 20), expand = c(0,0), breaks = trans(yticks), labels = yticks) + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+  geom_hline(yintercept = 5, linetype = "dotted", color = "red") +
+  geom_hline(yintercept = 2, linetype = "dotted", color = "black") + ggtitle("FGFR2_CN")
+
+# mapping each SV class to RE type
+df2 = df_CN_samp  %>%
+  mutate(sample_name = substr(sample_name, 1, 12),  
+         sample_name = factor(sample_name, levels = df$sample_name)) %>% 
+  group_by(sample_name, SVID_label, RE_FGFR2, group) %>% 
+  summarise(ploidy = sum(ploidy))
+
+x_cols = rep("black", length(unique(df_CN_samp$sample_name)))
+x_cols[which(df$FGFR2_amp == "Full Amp")] = "blue"
+x_cols[which(df$FGFR2_amp == "Partial Amp")] = "#FFC300"
+
+p_chains_bar = ggplot(df2, aes(x = sample_name, y = ploidy, fill = RE_FGFR2, color = RE_FGFR2)) + 
+  geom_bar(position = "fill", stat = "identity", aes(size = ifelse(trunc == T, 1, 0)), size = 0.5, width = 0.8) + 
+  scale_color_manual(values = rep("black", 5)) + theme_classic() +
+  scale_fill_manual(values = c("In-frame fusion" = "#660000", "Frame unknown" = "#F90708", "Intergenic space" = "#FF66FF", "Out-of-strand" = "#FFD700", "5'-E17" = "#3399FF")) + 
+  theme(legend.position = "bottom", axis.text.x = element_text(colour = x_cols, size = 8, angle = 90), axis.title.x = element_blank()) +
+  guides(color = "none")
+
+Ext_Fig1g = cowplot::plot_grid(p_cn, p_chains_bar, ncol = 1, rel_heights = c(1,1.5))
+Ext_Fig1g
+
+# source data
+df_ExtFig1g_up = df[, c("sample_name", "FGFR2_CN", "FGFR2_amp")]
+t_uniq = unique(df2$sample_name)
+df_ExtFig1g_bot = c()
+for(i in 1:length(t_uniq)){
+    t_df = df2 %>% filter(sample_name == t_uniq[i])
+    t_df$freq_ploidy = t_df$ploidy / sum(t_df$ploidy)
+    df_ExtFig1g_bot = rbind(df_ExtFig1g_bot, t_df)
+}
+df_ExtFig1g_bot = data.frame(df_ExtFig1g_bot) %>% select(-ploidy) 
+```
+
+# Selecting representative REs in each sample
+Posessing E18-truncating REs > Ploidy level  
+```{r}
+target_samp_2 = unique(FGFR2_SV_PURPLE_TARGET$sample_name)
+FGFR2_SV_rep = c()
+for(i in 1:length(target_samp_2)){
+  t_sv = FGFR2_SV_PURPLE_TARGET %>% filter(sample_name == target_samp_2[i])
+  t_purple = t_sv %>% 
+    arrange(desc(C_trunc), desc(Ploidy), up.RE_category, desc(RE_location), factor(RE_FGFR2), LINX_Fusion)
+  FGFR2_SV_rep = rbind(FGFR2_SV_rep, t_purple[1,])
+}
+
+FGFR2_SV_rep = FGFR2_SV_rep %>% mutate(FGFR2_amp = FGFR2_cnv>=5,
+                                       RE_FGFR2 = factor(RE_FGFR2, levels = c("In-frame fusion", "Frame unknown", 
+                                                "Intergenic space", "Out-of-strand", "Internal")))
+
+FGFR2_SV_rep = FGFR2_SV_rep %>% mutate(RNA_seq = rep(NA, nrow(FGFR2_SV_rep))) %>%
+  mutate(inconsistency = sample_name %in% c("171020_HMFregCPCT_FR14001200_FR15414400_CPCT02010647", "181207_HMFregCPCT_FR17756679_FR13922549_CPCT02230118", "170124_HMFregCPCT_FR13980100_FR13981180_CPCT02100048")) %>%
+  mutate(RNA_seq = replace(RNA_seq, !is.na(n_RNA) & RE_FGFR2 == "In-frame fusion", "In-frame fusion")) %>%
+  # complex REs with intergenic BPs inducing in-frame fusions supported by RNA-seq (STAR-Fusion / STAR-chimeric alignments)
+  mutate(RNA_seq = replace(RNA_seq, sample_name %in% c("171020_HMFregCPCT_FR14001200_FR15414400_CPCT02010647", "181207_HMFregCPCT_FR17756679_FR13922549_CPCT02230118"), "In-frame fusion")) %>%
+  # complex REs with intergenic BPs inducing out-of-frame fusion supported by RNA-seq (STAR-chimeric alignments)
+  mutate(RNA_seq = replace(RNA_seq, sample_name %in% "170124_HMFregCPCT_FR13980100_FR13981180_CPCT02100048", "Out-of-frame")) %>%
+  # remaining intergenic REs
+  mutate(RNA_seq = replace(RNA_seq, RE_FGFR2 == "Intergenic space" & !is.na(n_RNA) & inconsistency == F & grepl("::", STAR_chim), "Intergenic space")) %>%
+  # in-strand (frame-unknown)
+  mutate(RNA_seq = replace(RNA_seq, RE_FGFR2 == "Frame-unknown" & !is.na(STAR_chim) & inconsistency == F , "Out-of-frame")) %>%
+  # out-of-strand
+  mutate(RNA_seq = replace(RNA_seq, RE_FGFR2 == "Out-of-strand" & !is.na(STAR_chim) & inconsistency == F, "Out-of-strand")) %>%
+  # RNA-seq for internal REs was not used as internal REs cannot be evaluated by RNA-seq (ex, BP pairs are in same intronic region)
+  mutate(RNA_seq = replace(RNA_seq, is.na(RNA_seq) & !is.na(n_RNA), "Not available")) %>%
+  # CPCT02100119T sample --> in-frame by FGFR2-EDRF1 fasta file
+  mutate(RNA_seq = replace(RNA_seq, sample_name == "171115_HMFregCPCT_FR15414651_FR14000025_CPCT02100119", "In-frame fusion")) %>%
+  mutate(RNA_seq = factor(RNA_seq, levels = c("In-frame fusion", "Out-of-frame", "Intergenic space", "Out-of-strand", "Not available")))
+```
+
+# Oncoplot
+```{r, fig.width = 8, fig.height = 7}
+tcga_code = c("Biliary" = "CHOL", "Breast" = "BRCA", "Urinary tract" = "BLCA", 
+              "Ovary" = "OV", "Bone/Soft tissue" = "SARC", "Stomach" = "STAD", 
+              "Unknown" = "Unknown","Esophagus" = "ESCA", "Prostate" = "PRAD", 
+              "Thymus" = "THCA","Colon/Rectum" = "COAD", "Lung" = "LUAD/LUSC", "Neuroendocrine" = "Neuroendocrine",
+              "Head and neck" = "HNSC", "GI-tract" = "GI-tract")
+
+col_tumor = c("CHOL" = "#377EB8", "BRCA" = "#FF69B4", "BLCA" = "#000000", "OV" = "#F4CAE4", 
+              "SARC" = "#20b2aa", "STAD" = "#7FC97F", "ESCA" = "#ff4500", "PRAD" = "#b3b300",
+              "COAD" = "#FDC086", "LUAD/LUSC" = "#B3B3B3", "Neuroendocrine" = "#CCCCFF", "THCA" = "#846B5F", 
+              "HNSC" = "#E6AB02", "GI-tract" = "#009900", "Unknown" = "#606060")
+
+df_samp = FGFR2_SV_rep[, c("Tumor_type", "FGFR2_amp", "RE_FGFR2", "RE_location", "FGFR2_brkpt", "FGFR2_chr_SV", "RNA_seq", "C_trunc")]
+df_samp$Tumor_type = factor(tcga_code[match(df_samp$Tumor_type, names(tcga_code))],
+                            levels = names(col_tumor))
+
+# partial amplification
+t_samp = FGFR2_PARTIAL_AMP %>% filter(E1_E17>5, CN_diff>2)
+df_samp = df_samp %>% mutate(FGFR2_amp = ifelse(FGFR2_SV_rep$sample_name %in% t_samp$sample_id, "E1-E17", FGFR2_amp),
+                             FGFR2_amp = ifelse(FGFR2_amp == "TRUE", "E1-E18", FGFR2_amp),
+                             FGFR2_amp = ifelse(FGFR2_amp == "FALSE", NA, FGFR2_amp))
+colnames(df_samp) = c("Tumor_type", "FGFR2_amp", "FGFR2_RE_type", "FGFR2_position", "FGFR2_BP_location",
+                      "Partner_location", "RNA_support", "FGFR2_E18_truncation")
+
+ha = HeatmapAnnotation(df = df_samp, 
+                       col = list(Tumor_type = col_tumor, 
+                                  FGFR2_amp = c("E1-E18" = "blue", "E1-E17"= "#FFC300"),
+                                  FGFR2_RE_type = c("In-frame fusion" = "#660000", "Frame unknown" = "#F90708", 
+                                               "Intergenic space" = "#FF66FF", "Out-of-strand" = "#FFD700", "Internal" = "#989CFD"),
+                                  FGFR2_position = c("FGFR2 is upstream" = "#A30059", "FGFR2 is downstream" = "#006FA6"),
+                                  FGFR2_BP_location = c("I17" = "#911eb4", "5' to E17" = "#3399FF", "E18" = "#BFEF45"),
+                                  Partner_location = c("Intrachromosomal" = "#469990", "Interchromosomal" = "#e6beff"),
+                                  RNA_support = c("In-frame fusion" = "#660000", "Out-of-frame" = "#F90708", "Intergenic space" = "#FF66FF", 
+                                              "Out-of-strand" = "#FFD700", "Not available" = "#b7bcc4"),
+                                  FGFR2_E18_truncation = c("TRUE" = "red", "FALSE" = "white")), 
+                       na_col = "white", annotation_legend_param = list(Tumor_type = list(nrow = 5)))
+
+# sorting fusions
+index_1 = df_samp %>% mutate(index = 1:n()) %>% 
+    filter(FGFR2_E18_truncation == T) %>% 
+    arrange(FGFR2_RE_type, Tumor_type, FGFR2_BP_location, Partner_location) %>% 
+    pull(index)
+
+index_2 = df_samp %>% mutate(index = 1:n()) %>%
+    filter(FGFR2_E18_truncation== F) %>%
+    mutate(FGFR2_RE_type = factor(FGFR2_RE_type, levels = c(names(sort(table(FGFR2_RE_type), decreasing = T))))) %>%
+    arrange(FGFR2_RE_type, Tumor_type, FGFR2_amp) %>% 
+    pull(index)
+index = c(index_1, index_2)
+
+t_mat = matrix(nrow=0, ncol = length(index))
+colnames(t_mat) = stringr::str_split_fixed(FGFR2_SV_rep$sample_name, "_", 5)[,5]
+  
+hm = Heatmap(matrix = t_mat[,index], top_annotation = ha[index], column_names_gp = gpar(fontsize = 8),
+             column_title = paste("HMF cohort - FGFR2 REs (n=", length(index), ")", sep=""))
+
+Ext_Fig1h = draw(hm, annotation_legend_side = "bottom", merge_legend = F)
+df_ExtFig1h = data.frame(sample_id = colnames(t_mat)[index], df_samp[index,])
+```
+
+# source data
+```{r}
+xlsx::write.xlsx(df_ExtFig1f, file = "~/FGFR/Daniel/R/Nature_figures/sources/HMF_ExtFig1.xlsx", sheetName = "Ext_Fig1f", row.names = F)
+xlsx::write.xlsx(df_ExtFig1g_up, file = "~/FGFR/Daniel/R/Nature_figures/sources/HMF_ExtFig1.xlsx", sheetName = "Ext_Fig1g_up", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig1g_bot, file = "~/FGFR/Daniel/R/Nature_figures/sources/HMF_ExtFig1.xlsx", sheetName = "Ext_Fig1g_bot", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig1h, file = "~/FGFR/Daniel/R/Nature_figures/sources/HMF_ExtFig1.xlsx", sheetName = "Ext_Fig1h", row.names = F, append = T)
+xlsx::write.xlsx(df_Fig1f, file = "~/FGFR/Daniel/R/Nature_figures/sources/HMF_Fig1.xlsx", sheetName = "Fig1f", row.names = F)
+```
+

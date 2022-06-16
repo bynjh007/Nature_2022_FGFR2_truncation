@@ -1,0 +1,415 @@
+---
+title: "CCLE Ext_Fig13"
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraries & dataset
+```{r}
+library(rstatix)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+library(patchwork)
+
+# processed data loading
+load("~/FGFR/Daniel/R/Nature_figures/data/CCLE_GDSC_PharmacoDB/CCLE_processing.RData")
+```
+
+# Ext Fig 13a
+Oncoplot - AZD4547
+```{r, fig.width = 12, fig.height = 7}
+# Heatmap annotation
+col_tumor = c("BLCA" = "#000000", "STAD" = "#7FC97F", "ESCA" = "#FF4500",
+                "COAD" = "#FDC086", "LUAD/LUSC" = "#B3B3B3", "LIHC" = "#660000",
+                "HNSC" = "#E6AB02", "UCEC" = "#632f6b", "Bone cancer" = "#20b2aa",
+                "Skin cancer" = "#0000FF", "OV" = "#F4CAE4", "THCA" = "#99FFFF",
+                "Myeloma" = "#b26120", "GBM" = "#ffff00", "Other" = "#2f4f4f")
+
+col_RE = c("In-frame fusion" = "#660000", "Out-of-frame" = "#F90708", 
+           "BP outside I17 and 3'-partner" = "#3399FF", "5'-partner" = "#0000FF")
+col_azd = list(Tumor_type = col_tumor,
+               AUC = colorRamp2(c(0,0.7,1), c("blue","white","red")),
+               FGF3_4_9_AMP = c("FGF3/4/19_AMP" = "black", "no AMP" = "white"),
+               FGFR_AMP = c("FGFR1" = "#E0E0E0", "FGFR2" = "black", "FGFR3" = "#A0A0A0", "FGFR4" = "#606060", "no AMP" = "white"),
+               FGFR_hotspot_mut = c("FGFR2" = "black", "FGFR3" = "#A0A0A0", "none" = "white"),
+               FGFR1_exp = colorRamp2(c(0, 3, 6), c("white","yellow","red")),
+               FGFR2_exp = colorRamp2(c(0, 3, 6), c("white","yellow","red")),
+               FGFR3_exp = colorRamp2(c(0, 3, 6), c("white","yellow","red")),
+               FGFR4_exp = colorRamp2(c(0, 3, 6), c("white","yellow","red")),
+               FGFR_exp_comp = colorRamp2(c(0, 1, 12), c("white","yellow","red")),
+               FGFR1_RE = col_RE,
+               FGFR2_RE = col_RE,
+               FGFR3_RE = col_RE,
+               E18_C3_usage = colorRamp2(c(0, 0.5, 1), c("white","yellow","red")),
+               E18_truncation = c("FGFR2" = "red", "FGFR3" = "#DB0AFF", "None" = "white"))
+
+
+# Cancer type re-labeling
+lab_cancer = c("Bladder Cancer" = "BLCA","Gastric Cancer" = "STAD","Esophageal Cancer" = "ESCA","Colon/Colorectal Cancer" = "COAD",
+               "Lung Cancer" = "LUAD/LUSC","Liver Cancer" = "LIHC", "Head and Neck Cancer" = "HNSC", "Endometrial/Uterine Cancer" = "UCEC",
+               "Bone Cancer" = "Bone cancer", "Skin Cancer" = "Skin cancer", "Ovarian Cancer" = "OV", "Thyroid Cancer" = "THCA", 
+               "Myeloma" = "Myeloma", "Brain Cancer" = "GBM", "Other" = "Other")
+
+df_oncoplot_AZD = AZD4547_PDB_annot %>%
+    filter(!is.na(FGFR_exp_comp)) %>%
+    mutate(Gene = rep(NA, nrow(.)),
+           Gene = replace(Gene, !is.na(FGFR1_RE) & FGFR1_RE != "none", "FGFR1"),
+           Gene = replace(Gene, (!is.na(FGFR2_RE) & FGFR2_RE != "none") | E18_C3_usage == TRUE, "FGFR2"),
+           Gene = replace(Gene, !is.na(FGFR3_RE) & FGFR3_RE != "none", "FGFR3"),
+           Type = rep(NA, nrow(.)),
+           Type = replace(Type, rowSums(cbind(grepl("upstream:I17", FGFR1_RE), 
+                                            grepl("upstream:I17", FGFR2_RE), 
+                                            grepl("upstream:I17", FGFR3_RE))) !=0, "E18-truncation"),
+           Type = replace(Type, (rowSums(cbind(!is.na(FGFR1_RE) & FGFR1_RE != "none", 
+                                             !is.na(FGFR2_RE) & FGFR2_RE != "none", 
+                                             !is.na(FGFR3_RE) & FGFR3_RE != "none" )) !=0 & is.na(Type)), "other REs"),
+           Type = replace(Type, E18_C3_usage == TRUE, "E18-truncation"),
+           Type = replace(Type, is.na(Type), "None")) %>% 
+    mutate(E18_truncation = rep("None", nrow(.)),
+           E18_truncation = replace(E18_truncation, Type == "E18-truncation" & Gene == "FGFR2", "FGFR2"),
+           E18_truncation = replace(E18_truncation, Type == "E18-truncation" & Gene == "FGFR3", "FGFR3")) %>%
+    mutate(E18_truncation = factor(E18_truncation, levels = c("None", "FGFR2", "FGFR3"))) %>%
+    mutate(Tumor_type = cell_models_CCLE$primary_disease[match(CTRPv2.cellid, split_cell_names(cell_models_CCLE$CCLE_Name))],
+           Tumor_type = replace(Tumor_type, !(Tumor_type %in% names(lab_cancer)), "Other")) %>%
+    mutate(FGFR1_RE = replace(FGFR1_RE, grepl("upstream:I17:inframe", FGFR1_RE), "In-frame fusion"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("upstream:I17:out-of-frame", FGFR1_RE), "Out-of-frame"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("upstream:5'-E17", FGFR1_RE), "BP outside I17 and 3'-partner"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("downstream", FGFR1_RE), "5'-partner"),
+           FGFR1_RE = factor(FGFR1_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:I17:inframe", FGFR2_RE), "In-frame fusion"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:I17:out-of-frame", FGFR2_RE), "Out-of-frame"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:5'-E17", FGFR2_RE), "BP outside I17 and 3'-partner"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("downstream", FGFR2_RE), "5'-partner"),
+           FGFR2_RE = factor(FGFR2_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:I17:inframe", FGFR3_RE), "In-frame fusion"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:I17:out-of-frame", FGFR3_RE), "Out-of-frame"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:5'-E17", FGFR3_RE), "BP outside I17 and 3'-partner"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("downstream", FGFR3_RE), "5'-partner"),
+           FGFR3_RE = factor(FGFR3_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           E18_C3_usage = FGFR2_exon.C3)
+ 
+# Re-label cancer type
+df_oncoplot_AZD$Tumor_type = factor(lab_cancer[match(df_oncoplot_AZD$Tumor_type, names(lab_cancer))], lab_cancer)
+rownames(df_oncoplot_AZD) = cell_models_CCLE$Cell_name[match(df_oncoplot_AZD$CTRPv2.cellid, split_cell_names(cell_models_CCLE$CCLE_Name))]
+
+# selecting required columns
+df_oncoplot_AZD = df_oncoplot_AZD %>% 
+    select(Tumor_type, AUC, FGF3_4_9_AMP, FGFR_AMP, FGFR_hotspot_mut, FGFR1_exp, FGFR2_exp, FGFR3_exp, FGFR4_exp, FGFR_exp_comp,
+           FGFR1_RE, FGFR2_RE, FGFR3_RE, E18_C3_usage, E18_truncation) %>%
+    arrange(desc(AUC))
+
+ha_azd = HeatmapAnnotation(df = df_oncoplot_AZD, col = col_azd, show_legend = c(rep(T,6), F,F,F,T,F,T,F,T,T), 
+                           annotation_legend_param = list(Tumor_type = list(nrow = 5)), na_col = "white", show_annotation_name = FALSE)
+ha_azd_vars = HeatmapAnnotation(df = df_oncoplot_AZD, col = col_azd, show_legend = c(rep(T,6), F,F,F,T,F,T,F,T,T), 
+                                annotation_legend_param = list(Tumor_type = list(nrow = 5)), na_col = "white", show_annotation_name = TRUE,
+                                annotation_name_gp = gpar(fontsize = 8))
+
+# all cell lines
+ht_azd = Heatmap(matrix = matrix(nrow=0, ncol = nrow(df_oncoplot_AZD)), top_annotation = ha_azd, 
+             column_title = paste("CCLE cell lines (n = ", nrow(df_oncoplot_AZD), ")", sep = ""), width = unit(5, "in"))
+
+# including the cell lines with FGFR REs/Amplification
+ind = df_oncoplot_AZD %>% mutate(ind = 1:nrow(.)) %>%
+    filter(grepl("FGFR", FGFR_AMP) | !is.na(FGFR1_RE) | !is.na(FGFR2_RE) | !is.na(FGFR3_RE) | grepl("FGFR", E18_truncation) | grepl("FGFR", FGFR_hotspot_mut)) %>%
+    pull(ind)
+
+t_mat =  matrix(nrow=0, ncol = length(ind))
+colnames(t_mat) = rownames(df_oncoplot_AZD)[ind]
+ht_azd_vars = Heatmap(matrix = t_mat, top_annotation = ha_azd_vars[ind], column_title = "CCLE cell lines (FGFR amp/trunc/mut)", width = unit(2, "in"),
+                      column_names_gp = gpar(fontsize = 8))
+
+ExtFig13a_AZD = ht_azd + ht_azd_vars
+ExtFig13a_AZD
+df_ExtFig13a_AZD = data.frame(Cell_line = rownames(df_oncoplot_AZD), df_oncoplot_AZD)
+
+```
+
+# Ext Fig 13a
+Oncoplot - PD173074  
+```{r, fig.width 12, fig.height = 7}
+# Cancer type re-labeling
+col_tumor = c("LUAD/LUSC" = "#B3B3B3", "OV" = "#F4CAE4", "UCEC" = "#632f6b",
+                "BRCA" = "#FF69B4", "COAD" = "#FDC086", "SKCM" = "#0000FF", "PAAD" = "#556b2f",
+                "ESCA" = "#ff4500", "STAD" = "#7FC97F", "GBM" = "#ffff00", "BLCA" = "#000000", "Other" = "#2f4f4f")
+col_pd = col_azd
+col_pd$Tumor_type = col_tumor
+col_pd$AUC = colorRamp2(c(0.4,0.9, 1), c("blue","white","red"))
+
+lab_cancer = c("BLCA","BRCA","COAD","ESCA","GBM","LUAD/LUSC","OV","PAAD","SKCM","STAD","UCEC")
+
+df_oncoplot_PD = PD173074_GDSC_annot %>%
+    filter(!is.na(FGFR_exp_comp)) %>%
+    mutate(Gene = rep(NA, nrow(.)),
+           Gene = replace(Gene, !is.na(FGFR1_RE) & FGFR1_RE != "none", "FGFR1"),
+           Gene = replace(Gene, (!is.na(FGFR2_RE) & FGFR2_RE != "none") | E18_C3_usage == TRUE, "FGFR2"),
+           Gene = replace(Gene, !is.na(FGFR3_RE) & FGFR3_RE != "none", "FGFR3"),
+           Type = rep(NA, nrow(.)),
+           Type = replace(Type, rowSums(cbind(grepl("upstream:I17", FGFR1_RE), 
+                                            grepl("upstream:I17", FGFR2_RE), 
+                                            grepl("upstream:I17", FGFR3_RE))) !=0, "E18-truncation"),
+           Type = replace(Type, (rowSums(cbind(!is.na(FGFR1_RE) & FGFR1_RE != "none", 
+                                             !is.na(FGFR2_RE) & FGFR2_RE != "none", 
+                                             !is.na(FGFR3_RE) & FGFR3_RE != "none" )) !=0 & is.na(Type)), "other REs"),
+           Type = replace(Type, E18_C3_usage == TRUE, "E18-truncation"),
+           Type = replace(Type, is.na(Type), "None")) %>% 
+    mutate(E18_truncation = rep("None", nrow(.)),
+           E18_truncation = replace(E18_truncation, Type == "E18-truncation" & Gene == "FGFR2", "FGFR2"),
+           E18_truncation = replace(E18_truncation, Type == "E18-truncation" & Gene == "FGFR3", "FGFR3")) %>%
+    mutate(E18_truncation = factor(E18_truncation, levels = c("None", "FGFR2", "FGFR3"))) %>%
+    mutate(Tumor_type = TCGA.classification,
+           Tumor_type = ifelse(grepl("LUAD|LUSC|SCLC", TCGA.classification), "LUAD/LUSC", Tumor_type),
+           Tumor_type = ifelse(grepl("COREAD", TCGA.classification), "COAD", Tumor_type),
+           Tumor_type = replace(Tumor_type, !(Tumor_type %in% lab_cancer), "Other")) %>%
+    mutate(FGFR1_RE = replace(FGFR1_RE, grepl("upstream:I17:inframe", FGFR1_RE), "In-frame fusion"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("upstream:I17:out-of-frame", FGFR1_RE), "Out-of-frame"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("upstream:5'-E17", FGFR1_RE), "BP outside I17 and 3'-partner"),
+           FGFR1_RE = replace(FGFR1_RE, grepl("downstream", FGFR1_RE), "5'-partner"),
+           FGFR1_RE = factor(FGFR1_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:I17:inframe", FGFR2_RE), "In-frame fusion"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:I17:out-of-frame", FGFR2_RE), "Out-of-frame"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("upstream:5'-E17", FGFR2_RE), "BP outside I17 and 3'-partner"),
+           FGFR2_RE = replace(FGFR2_RE, grepl("downstream", FGFR2_RE), "5'-partner"),
+           FGFR2_RE = factor(FGFR2_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:I17:inframe", FGFR3_RE), "In-frame fusion"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:I17:out-of-frame", FGFR3_RE), "Out-of-frame"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("upstream:5'-E17", FGFR3_RE), "BP outside I17 and 3'-partner"),
+           FGFR3_RE = replace(FGFR3_RE, grepl("downstream", FGFR3_RE), "5'-partner"),
+           FGFR3_RE = factor(FGFR3_RE, levels = c("In-frame fusion", "Out-of-frame", "BP outside I17 and 3'-partner", "5'-partner")),
+           E18_C3_usage = FGFR2_exon.C3)
+ 
+rownames(df_oncoplot_PD) = make.unique(df_oncoplot_PD$label)
+
+# selecting required columns
+df_oncoplot_PD = df_oncoplot_PD %>% 
+    select(Tumor_type, AUC, FGF3_4_9_AMP, FGFR_AMP, FGFR_hotspot_mut, FGFR1_exp, FGFR2_exp, FGFR3_exp, FGFR4_exp, FGFR_exp_comp,
+           FGFR1_RE, FGFR2_RE, FGFR3_RE, E18_C3_usage, E18_truncation) %>%
+    arrange(desc(AUC))
+
+ha_pd = HeatmapAnnotation(df = df_oncoplot_PD, col = col_pd, show_legend = c(rep(T,6), F,F,F,T,F,T,F,T,T), 
+                           annotation_legend_param = list(Tumor_type = list(nrow = 5)), na_col = "white", show_annotation_name = FALSE)
+ha_pd_vars = HeatmapAnnotation(df = df_oncoplot_PD, col = col_pd, show_legend = c(rep(T,6), F,F,F,T,F,T,F,T,T), 
+                                annotation_legend_param = list(Tumor_type = list(nrow = 5)), na_col = "white", show_annotation_name = TRUE,
+                                annotation_name_gp = gpar(fontsize = 8))
+
+# all cell lines
+ht_pd = Heatmap(matrix = matrix(nrow=0, ncol = nrow(df_oncoplot_PD)), top_annotation = ha_pd, 
+             column_title = paste("CCLE cell lines (n = ", nrow(df_oncoplot_PD), ")", sep = ""), width = unit(5, "in"))
+
+# including the cell lines with FGFR REs/Amplification
+ind = df_oncoplot_PD %>% mutate(ind = 1:nrow(.)) %>%
+    filter(grepl("FGFR", FGFR_AMP) | !is.na(FGFR1_RE) | !is.na(FGFR2_RE) | !is.na(FGFR3_RE) | grepl("FGFR", E18_truncation) | grepl("FGFR", FGFR_hotspot_mut)) %>%
+    pull(ind)
+
+t_mat =  matrix(nrow=0, ncol = length(ind))
+colnames(t_mat) = rownames(df_oncoplot_PD)[ind]
+ht_pd_vars = Heatmap(matrix = t_mat, top_annotation = ha_pd_vars[ind], column_title = "CCLE cell lines (FGFR amp/trunc/mut)", width = unit(2, "in"),
+                      column_names_gp = gpar(fontsize = 8))
+
+ExtFig13a_PD = ht_pd + ht_pd_vars
+ExtFig13a_PD
+
+df_ExtFig13a_PD = data.frame(Cell_line = rownames(df_oncoplot_PD), df_oncoplot_PD)
+```
+
+# Ext Fig 13b
+Correlation between drugs  
+```{r, fig.width = 8, fig.height = 6}
+library(ggrepel)
+ovp = intersect(rownames(df_oncoplot_AZD), rownames(df_oncoplot_PD))
+
+df = data.frame(cell_name = ovp, 
+                AUC_AZD4547 = df_oncoplot_AZD$AUC[match(ovp, rownames(df_oncoplot_AZD))],
+                AUC_PD173074 = df_oncoplot_PD$AUC[match(ovp, rownames(df_oncoplot_PD))]) %>%
+    mutate(alteration = case_when(cell_name %in% rownames(df_oncoplot_AZD %>% filter(E18_truncation == "FGFR2")) ~ "FGFR2 truncation",
+                            cell_name %in% rownames(df_oncoplot_AZD %>% filter(E18_truncation == "FGFR3")) ~ "FGFR3 truncation",
+                            cell_name %in% rownames(df_oncoplot_AZD %>% filter(FGFR_hotspot_mut == "FGFR2")) ~ "FGFR2 missense hotspot mut",
+                            cell_name %in% rownames(df_oncoplot_AZD %>% filter(FGFR_hotspot_mut == "FGFR3")) ~ "FGFR3 missense hotspot mut")) %>%
+    mutate(label = ifelse(!is.na(alteration), cell_name, NA))
+
+cor_R = cor.test(df$AUC_AZD4547, df$AUC_PD173074)
+p_cor_drugs = ggplot(df, aes(x = AUC_AZD4547, y = AUC_PD173074, color = alteration)) + geom_point() + 
+    geom_label_repel(aes(label = label), min.segment.length = 0) + theme_classic() +
+    ggtitle(paste("R=", formatC(cor_R$estimate, digits=2), ", ", "P=", formatC(cor_R$p.value, digits=2, format="e"), sep = ""))
+
+p_cor_drugs
+df_ExtFig13b = df[, c("cell_name", "AUC_AZD4547", "AUC_PD173074", "alteration")] 
+```
+
+# Ext Fig 13c/d/e
+AZD4547 response - boxplot  
+```{r}
+# FGF3/4/9 amplification
+df_ExtFig13c_AZD = df_oncoplot_AZD %>% filter(!is.na(FGF3_4_9_AMP)) %>% select(FGF3_4_9_AMP, AUC)
+
+stat.test = df_ExtFig13c_AZD %>% 
+    wilcox_test(AUC ~ FGF3_4_9_AMP) %>% add_significance("p") %>% add_xy_position(x = "FGF3_4_9_AMP")
+                             
+p_amp_FGF_AZD = ggplot(df_ExtFig13c_AZD, aes(x = FGF3_4_9_AMP, y = AUC)) +
+    geom_jitter(aes(color = FGF3_4_9_AMP), width = 0.2) +
+    geom_boxplot(aes(group = FGF3_4_9_AMP), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray", "black")) +
+    stat_pvalue_manual(stat.test, label = "p") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0, 1.2))+
+    xlab("Amplification") + ylab("AZD4547 AUC")
+
+# FGFR amplification
+df_ExtFig13d_AZD = df_oncoplot_AZD %>% filter(!is.na(FGFR_AMP)) %>% select(FGFR_AMP, AUC)
+
+stat.test = df_ExtFig13d_AZD %>% 
+    tukey_hsd(AUC ~ FGFR_AMP) %>% add_significance("p.adj") %>% add_xy_position(x = "FGFR_AMP")
+p_amp_FGFR_AZD = ggplot(df_ExtFig13d_AZD, aes(x = FGFR_AMP, y = AUC)) +
+    geom_jitter(aes(color = FGFR_AMP), width = 0.2) +
+    geom_boxplot(aes(group = FGFR_AMP), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","black","black","black", "black")) +
+    stat_pvalue_manual(stat.test[1:4,], label = "p.adj") + theme_classic() + 
+    theme(legend.position = "none")+ coord_cartesian(ylim = c(0, 1.2)) +
+    xlab("Amplification") + ylab("AZD4547 AUC")
+
+# FGFR2/3 hotspot mutation
+df_ExtFig13e_AZD = df_oncoplot_AZD %>% filter(!is.na(FGFR_hotspot_mut)) %>% select(FGFR_hotspot_mut, AUC)
+stat.test = df_ExtFig13e_AZD %>% 
+    tukey_hsd(AUC ~ FGFR_hotspot_mut) %>% add_significance("p.adj") %>% add_xy_position(x = "FGFR_hotspot_mut")
+
+p_hotspot_AZD = ggplot(df_ExtFig13e_AZD, aes(x = FGFR_hotspot_mut, y = AUC)) +
+    geom_jitter(aes(color = FGFR_hotspot_mut), width = 0.2) +
+    geom_boxplot(aes(group = FGFR_hotspot_mut), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray", "black", "black")) +
+    stat_pvalue_manual(stat.test, label = "p.adj") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0, 1.2)) +
+    xlab("Missense hotspot mut") + ylab("AZD4547 AUC")
+```
+
+# Ext Fig 13 c/d/e
+PD173074 response - boxplot
+```{r}
+# FGF3/4/9 amplification
+df_ExtFig13c_PD = df_oncoplot_PD %>% filter(!is.na(FGF3_4_9_AMP)) %>% select(FGF3_4_9_AMP, AUC)
+
+stat.test = df_ExtFig13c_PD %>% 
+    wilcox_test(AUC ~ FGF3_4_9_AMP) %>% add_significance("p") %>% add_xy_position(x = "FGF3_4_9_AMP")
+                             
+p_amp_FGF_PD = ggplot(df_ExtFig13c_PD, aes(x = FGF3_4_9_AMP, y = AUC)) +
+    geom_jitter(aes(color = FGF3_4_9_AMP), width = 0.2) +
+    geom_boxplot(aes(group = FGF3_4_9_AMP), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray", "black")) +
+    stat_pvalue_manual(stat.test, label = "p") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0.4, 1.2))+
+    xlab("Amplification") + ylab("PD173074 AUC")
+
+# FGFR amplification
+df_ExtFig13d_PD = df_oncoplot_PD %>% filter(!is.na(FGFR_AMP)) %>% select(FGFR_AMP, AUC)
+
+stat.test = df_ExtFig13d_PD %>% 
+    tukey_hsd(AUC ~ FGFR_AMP) %>% add_significance("p.adj") %>% add_xy_position(x = "FGFR_AMP")
+p_amp_FGFR_PD = ggplot(df_ExtFig13d_PD, aes(x = FGFR_AMP, y = AUC)) +
+    geom_jitter(aes(color = FGFR_AMP), width = 0.2) +
+    geom_boxplot(aes(group = FGFR_AMP), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","black","black","black", "black")) +
+    stat_pvalue_manual(stat.test[1:4,], label = "p.adj") + theme_classic() + 
+    theme(legend.position = "none")+ coord_cartesian(ylim = c(0.4, 1.2)) +
+    xlab("Amplification") + ylab("PD173074 AUC")
+
+# FGFR2/3 hotspot mutation
+df_ExtFig13e_PD = df_oncoplot_PD %>% filter(!is.na(FGFR_hotspot_mut)) %>% select(FGFR_hotspot_mut, AUC)
+stat.test = df_ExtFig13e_PD %>% 
+    tukey_hsd(AUC ~ FGFR_hotspot_mut) %>% add_significance("p.adj") %>% add_xy_position(x = "FGFR_hotspot_mut")
+
+p_hotspot_PD = ggplot(df_ExtFig13e_PD, aes(x = FGFR_hotspot_mut, y = AUC)) +
+    geom_jitter(aes(color = FGFR_hotspot_mut), width = 0.2) +
+    geom_boxplot(aes(group = FGFR_hotspot_mut), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray", "black", "black")) +
+    stat_pvalue_manual(stat.test, label = "p.adj") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0.4, 1.2)) +
+    xlab("Missense hotspot mut") + ylab("PD173074 AUC")
+```
+
+# Ext Fig 13 c/d/e
+```{r, fig.width = 12, fig.height = 10}
+p_ExtFig13_cde = (p_amp_FGF_AZD + p_amp_FGFR_AZD + p_hotspot_AZD + plot_layout(widths = c(2,5,3))) / 
+    (p_amp_FGF_PD + p_amp_FGFR_PD + p_hotspot_PD + plot_layout(widths = c(2,5,3)))
+p_ExtFig13_cde
+```
+
+# Ext Fig 13f
+FGFR expression correlation   
+```{r, fig.width = 12, fig.height = 5}
+df_ExtFig13f_AZD = df_oncoplot_AZD %>% select(FGFR1_exp, FGFR2_exp, FGFR3_exp, FGFR4_exp, FGFR_exp_comp, AUC) %>% filter(!is.na(FGFR1_exp), !is.na(AUC))
+df_ExtFig13f_PD = df_oncoplot_PD %>% select(FGFR1_exp, FGFR2_exp, FGFR3_exp, FGFR4_exp, FGFR_exp_comp, AUC) %>% filter(!is.na(FGFR1_exp), !is.na(AUC))
+
+p_fgfr_exp_AZD = vector("list", 5)
+p_fgfr_exp_PD = vector("list", 5)
+
+for(i in 1:5){
+    t_lab = colnames(df_ExtFig13f_AZD)
+    t_r = cor.test(df_ExtFig13f_AZD[,i], df_ExtFig13f_AZD$AUC)
+    #p_fgfr_exp_AZD[[i]] = ggplot(df_ExtFig13f_AZD, aes_string(x = sprintf("FGFR%d_exp", i), y = "AUC")) + geom_point() + theme_classic() + 
+    p_fgfr_exp_AZD[[i]] = ggplot(df_ExtFig13f_AZD, aes_string(x = t_lab[i], y = "AUC")) + geom_point() + theme_classic() + 
+        ggtitle(paste("R = ", round(t_r$estimate, 3), ", P =", formatC(t_r$p.value, digits = 2, format = "e"), sep = "")) + 
+        theme(plot.title = element_text(size = 7))
+
+    t_r = cor.test(df_ExtFig13f_PD[,i], df_ExtFig13f_PD$AUC)
+    p_fgfr_exp_PD[[i]] = ggplot(df_ExtFig13f_PD, aes_string(x = t_lab[i], y = "AUC")) + geom_point() + theme_classic() + 
+        ggtitle(paste("R = ", round(t_r$estimate, 3), ", P =", formatC(t_r$p.value, digits = 2, format = "e"), sep = "")) +
+        theme(plot.title = element_text(size = 7))
+}
+
+p_ExtFig13_f = (p_fgfr_exp_AZD[[1]] + p_fgfr_exp_AZD[[2]] + p_fgfr_exp_AZD[[3]] + p_fgfr_exp_AZD[[4]] + p_fgfr_exp_AZD[[5]] + plot_layout(nrow = 1)) /
+    (p_fgfr_exp_PD[[1]] + p_fgfr_exp_PD[[2]] + p_fgfr_exp_PD[[3]] + p_fgfr_exp_PD[[4]] + p_fgfr_exp_PD[[5]] + plot_layout(nrow = 1))
+
+p_ExtFig13_f
+```
+
+# Ext Fig 13g 
+C-terminal truncation
+```{r}
+# AZD4547 response
+df_ExtFig13g_AZD = df_oncoplot_AZD %>% select(E18_truncation, AUC)
+stat.test = df_ExtFig13g_AZD %>% tukey_hsd(AUC ~ E18_truncation) %>% add_significance("p.adj") %>% add_xy_position(x = "E18_truncation")
+p_E18_trunc_AZD = ggplot(df_ExtFig13g_AZD, aes(x = E18_truncation, y = AUC)) +
+    geom_jitter(aes(color = E18_truncation), width = 0.2) +
+    geom_boxplot(aes(group = E18_truncation), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","red","#DB0AFF")) +
+    stat_pvalue_manual(stat.test, label = "p.adj") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0, 1.3))
+
+# PD137074 response
+df_ExtFig13g_PD = df_oncoplot_PD %>% select(E18_truncation, AUC)
+stat.test = df_ExtFig13g_PD %>% tukey_hsd(AUC ~ E18_truncation) %>% add_significance("p.adj") %>% add_xy_position(x = "E18_truncation")
+p_E18_trunc_PD = ggplot(df_ExtFig13g_PD, aes(x = E18_truncation, y = AUC)) +
+    geom_jitter(aes(color = E18_truncation), width = 0.2) +
+    geom_boxplot(aes(group = E18_truncation), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","red","#DB0AFF")) +
+    stat_pvalue_manual(stat.test, label = "p.adj") + theme_classic() +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(0.4, 1.2))
+
+p_ExtFig13_g = p_E18_trunc_AZD + p_E18_trunc_PD
+
+p_ExtFig13_g
+```
+
+# source data
+```{r}
+df_ExtFig13c = rbind(data.frame(df_ExtFig13c_AZD, drug = "AZD4547"), data.frame(df_ExtFig13c_PD, drug = "PD173074"))
+df_ExtFig13d = rbind(data.frame(df_ExtFig13d_AZD, drug = "AZD4547"), data.frame(df_ExtFig13d_PD, drug = "PD173074"))
+df_ExtFig13e = rbind(data.frame(df_ExtFig13e_AZD, drug = "AZD4547"), data.frame(df_ExtFig13e_PD, drug = "PD173074"))
+df_ExtFig13f = rbind(data.frame(df_ExtFig13f_AZD, drug = "AZD4547"), data.frame(df_ExtFig13f_PD, drug = "PD173074"))
+df_ExtFig13g = rbind(data.frame(df_ExtFig13g_AZD, drug = "AZD4547"), data.frame(df_ExtFig13g_PD, drug = "PD173074"))
+
+xlsx::write.xlsx(df_ExtFig13a_AZD, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13a_AZD", row.names = F)
+xlsx::write.xlsx(df_ExtFig13a_PD, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13a_PD", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13b, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13b", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13c, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13c", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13d, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13d", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13e, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13e", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13f, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13f", row.names = F, append = T)
+xlsx::write.xlsx(df_ExtFig13g, file = "~/FGFR/Daniel/R/Nature_figures/sources/CCLE_ExtFig13.xlsx", sheetName = "Ext_Fig13g", row.names = F, append = T)
+
+```
+

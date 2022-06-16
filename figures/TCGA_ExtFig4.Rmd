@@ -1,0 +1,247 @@
+---
+title: "TCGA Ext_Fig4"
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraires
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(dplyr)
+library(ggplot2)
+```
+
+# TCGA data
+```{r}
+load("~/FGFR/Daniel/R/Nature_figures/data/TCGA/TCGA_target_samples.RData")
+
+# pre-processing
+t = names(sort(table(df_samples_oncoplot$TCGA_code), decreasing = T))
+t = c(t[!grepl("others", t)], "others")
+df_samples_oncoplot$TCGA_code = factor(df_samples_oncoplot$TCGA_code, levels = t)
+
+# only showing truncation mutations
+t_onco = FGFR2_mut_info %>% 
+    mutate(pos = as.numeric(substr(Protein.Change, 2,4))) %>%
+    mutate(mut_lab = case_when(pos>=768 & pos<=783 ~ "E18-trunc-onco",
+                               pos>=788 & pos>783 ~ "E18-trunc-others")) %>%
+    filter(!is.na(mut_lab), Sample.ID %in% df_samples_oncoplot$Sample) %>%
+    select(Sample.ID, mut_lab, Protein.Change)
+
+df_samples_oncoplot$E18_trunc_mut = t_onco$mut_lab[match(df_samples_oncoplot$Sample, t_onco$Sample.ID)]
+```
+
+
+# Ext Fig 4c
+Evaluating the expression of different REs in the same samples  
+```{r, fig.width = 10, fig.height = 5}
+FGFR2_cnv_log2ratio = read.table("~/FGFR/Daniel/R/Nature_figures/data/TCGA/cBioportal_FGFR2_Log2_copy-number_values.txt", header = T, stringsAsFactors = F, sep = "\t")
+FGFR2_cnv_discrete = read.table("~/FGFR/Daniel/R/Nature_figures/data/TCGA/cBioportal_FGFR2_cna.txt", header = T, stringsAsFactors = F, sep = "\t")
+
+# CN value
+t_samp = df_samples_oncoplot %>% filter(!is.na(RE_type)) %>% pull(Sample)
+df = data.frame(sample_name = t_samp,
+                FGFR2_amp = df_samples_oncoplot$FGFR2_amp[match(t_samp, df_samples_oncoplot$Sample)],
+                cnv_log2ratio = FGFR2_cnv_log2ratio$FGFR2[match(t_samp, FGFR2_cnv_log2ratio$SAMPLE_ID)],
+                FGFR2_CN_status = FGFR2_cnv_discrete$FGFR2[match(t_samp, FGFR2_cnv_discrete$SAMPLE_ID)]) %>%
+    arrange(desc(FGFR2_CN_status), desc(cnv_log2ratio)) %>%
+    mutate(sample_name = factor(sample_name, levels = sample_name))
+
+p_cn = ggplot(df, aes(x = sample_name, y = FGFR2_CN_status)) + geom_bar(stat = "identity") + theme_classic() +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+  geom_hline(yintercept = 2, linetype = "dotted", color = "red") +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "black") + ggtitle("FGFR2_CN")
+
+# RE value
+df_2 = FGFR2_RE_all %>% filter(substr(Sample_id, 1, 15) %in% t_samp) %>% 
+    mutate(Sample_id = factor(substr(Sample_id, 1, 15), levels = levels(df$sample_name))) %>%
+    mutate(RE_type = ifelse(C_trunc == FALSE, "5'-E17/downstream", as.character(RE_type)),
+           RE_type = replace(RE_type, RE_type == "inframe", "In-frame fusion"),
+           RE_type = replace(RE_type, RE_type == "out-of-frame", "Out-of-frame"),
+           RE_type = replace(RE_type, RE_type == "intergenic", "Intergenic space"),
+           RE_type = replace(RE_type, RE_type == "out-of-strand", "Out-of-strand"),
+           RE_type = replace(RE_type, RE_type == "5'-E17/downstream", "BP 5’ to I17 and/or 5’-partner"),
+           RE_type = factor(RE_type, levels = c("In-frame fusion", "Out-of-frame", "Intergenic space", 
+                                                "Out-of-strand", "BP 5’ to I17 and/or 5’-partner"))) %>%
+    mutate(FGFR2_amp = rep(NA, nrow(.)),
+           FGFR2_amp = replace(FGFR2_amp, Sample_id %in% (df %>% filter(FGFR2_amp == "Amp") %>% pull(sample_name)), "E1-E18"),
+           FGFR2_amp = replace(FGFR2_amp, Sample_id %in% (df %>% filter(FGFR2_amp == "Partial amp") %>% pull(sample_name)), "E1-E17"))
+
+x_cols = rep("black", length(unique(df_2$Sample_id)))
+x_cols[which(df$FGFR2_amp == "Amp")] = "blue"
+x_cols[which(df$FGFR2_amp == "Partial amp")] = "#FFC300"
+
+Ext_Fig4c = ggplot(df_2, aes(x = Sample_id, y = Junc_count, fill = RE_type, color = RE_type)) + 
+  geom_bar(position = "fill", stat = "identity", aes(size = ifelse(C_trunc == T, 1, 0)), size = 0.5, width = 0.8) + 
+  scale_color_manual(values = rep("black", 5)) + theme_classic() + 
+   scale_fill_manual(values = c("In-frame fusion" = "#660000", "Out-of-frame" = "#F90708", "Intergenic space" = "#FF66FF", 
+                                "Out-of-strand" = "#FFD700", "BP 5’ to I17 and/or 5’-partner" = "#3399FF")) + 
+  theme(axis.text.x=element_text(angle=60, hjust=1, color = x_cols), legend.position = "bottom") +
+  guides(color = "none") + ylab("FGFR2 RE distribution")
+
+Ext_Fig4c
+
+# source data
+t_uniq = unique(df_2$Sample_id)
+df_ExtFig4c = c()
+for(i in 1:length(t_uniq)){
+    t_df = df_2 %>% filter(Sample_id == t_uniq[i]) %>% select(Sample_id, FGFR2_amp, RE_type, Junc_count)
+    t_df$freq_RE = t_df$Junc_count / sum(t_df$Junc_count)
+    df_ExtFig4c = rbind(df_ExtFig4c, t_df)
+}
+df_ExtFig4c = data.frame(df_ExtFig4c) %>% select(-Junc_count) 
+```
+
+# Ext Fig 4d
+TCGA oncoplot  
+```{r, fig.width = 10, fig.height = 7}
+# remove the samples with distal truncating mutations
+# remove the samples with minor read counts for C-terminal SVs from the list of the samples harbouring C-terminal truncation
+df_samples_oncoplot_sort = df_samples_oncoplot %>%
+    mutate(RE_type = as.character(RE_type),
+           RE_type = ifelse(RE_location == "upstream" & FGFR2_brkpt == "I17", RE_type, NA),
+           FGFR2_chr_SV = as.character(FGFR2_chr_SV), 
+           FGFR2_chr_SV = ifelse(RE_location == "upstream" & FGFR2_brkpt == "I17", FGFR2_chr_SV, NA),
+           Tumor_type = TCGA_code_all,
+           Tumor_type = ifelse(grepl("THCA|THYM", Tumor_type), "THCA/THYM", Tumor_type),
+           Tumor_type = ifelse(grepl("KIRP|KIRC", Tumor_type), "KIRP/KIRC", Tumor_type)) %>% 
+    arrange(RE_type, desc(RE_location), desc(FGFR2_brkpt), desc(Exon_C3_high), desc(Exon_C4_high), desc(FGFR2_amp), desc(E18_trunc_mut), Tumor_type)
+
+
+ind_re = df_samples_oncoplot_sort %>% 
+    mutate(index = 1:nrow(df_samples_oncoplot_sort)) %>%
+    filter(Sample %in% unique(df_ExtFig4c %>% filter(RE_type != "BP 5’ to I17 and/or 5’-partner", freq_RE>0.15) %>% pull(Sample_id))) %>%
+    pull(index)
+df_samples_oncoplot_re_inf = df_samples_oncoplot_sort[ind_re,] %>% filter(RE_type == "inframe") %>%
+    arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+df_samples_oncoplot_re_of = df_samples_oncoplot_sort[ind_re,] %>% filter(RE_type == "out-of-frame") %>%
+    arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+df_samples_oncoplot_re_int = df_samples_oncoplot_sort[ind_re,] %>% filter(RE_type == "intergenic") %>%
+    arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+
+ind_C3 = setdiff(which(!is.na(df_samples_oncoplot_sort$Exon_C3_high)), ind_re)
+df_samples_oncoplot_C3 = df_samples_oncoplot_sort[ind_C3,] %>% 
+  arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+
+ind_C4 = setdiff(which(!is.na(df_samples_oncoplot_sort$Exon_C4_high)), c(ind_re, ind_C3))
+df_samples_oncoplot_C4 = df_samples_oncoplot_sort[ind_C4,] %>% 
+  arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+
+ind_mut = setdiff(which(grepl("onco", df_samples_oncoplot_sort$E18_trunc_mut)), c(ind_re, ind_C3, ind_C4))
+df_samples_oncoplot_mut = df_samples_oncoplot_sort[ind_mut,] %>% 
+  arrange(factor(Tumor_type, levels = names(sort(table(Tumor_type), decreasing = T))))
+
+df_samples_oncoplot_target = rbind(df_samples_oncoplot_re_inf, df_samples_oncoplot_re_of, df_samples_oncoplot_re_int, 
+                                   df_samples_oncoplot_C3, df_samples_oncoplot_C4, df_samples_oncoplot_mut) %>%
+    mutate(FGFR2_RE_type = as.character(RE_type),
+           FGFR2_RE_type = replace(FGFR2_RE_type , RE_type == "inframe", "In-frame fusion"),
+           FGFR2_RE_type = replace(FGFR2_RE_type, RE_type == "out-of-frame", "Out-of-frame"),
+           FGFR2_RE_type = replace(FGFR2_RE_type, RE_type == "intergenic", "Intergenic space"),
+           FGFR2_RE_type = factor(FGFR2_RE_type, levels = c("In-frame fusion", "Out-of-frame", "Intergenic space"))) %>%
+    mutate(FGFR2_E18_truncating_mut = ifelse(E18_trunc_mut == "E18-trunc-onco", TRUE, NA)) %>%
+    mutate(FGFR2_amp = replace(FGFR2_amp, FGFR2_amp == "Amp", "E1-E18"),
+           FGFR2_amp = replace(FGFR2_amp, FGFR2_amp == "Partial amp", "E1-E17")) %>%
+    mutate(Partner_location = FGFR2_chr_SV,
+           Partner_location = replace(Partner_location, Partner_location == "intrachromosomal", "Chr-10"),
+           Partner_location = replace(Partner_location, Partner_location == "interchromosomal", "Other")) %>%
+    mutate(FGFR2_E18_C3_usage = Exon_C3_high,
+           E18_C3_junction_reads = Exon_C3_ratio_junc,
+           FGFR2_E18_C4_usage = Exon_C4_high,
+           E18_C4_junction_reads = Exon_C4_ratio_junc)
+
+df_ExtFig4d = df_samples_oncoplot_target %>%
+    select(Tumor_type, FGFR2_E18_truncating_mut, FGFR2_amp, FGFR2_exp, FGFR2_RE_type, Partner_location, 
+           FGFR2_E18_C3_usage, E18_C3_junction_reads, FGFR2_E18_C4_usage, E18_C4_junction_reads, TCGA_code_all)
+
+# oncoplot heatmap annotation
+col_annot = list(Tumor_type = c("UCEC" = "#632f6b", "BRCA" = "#FF69B4", "LIHC" = "#660000", "BLCA" = "#000000",
+                                "HNSC" = "#E6AB02", "THCA/THYM" = "#99FFFF", "CHOL" = "#377EB8", "STAD" = "#7FC97F",
+                                "KIRP/KIRC" = "#CCCCFF", "SARC" = "#00CCCC", "ACC"="#2f4f4f", "CESC"="#00ff00",
+                                "GBM" = "#ffff00", "LUSC" = "#B3B3B3", "PAAD" = "#556b2f", "SKCM" = "#0000FF"),
+                 FGFR2_E18_truncating_mut = c("TRUE" = "#0C5D08"),
+                 FGFR2_amp = c("E1-E18" = "blue", "E1-E17" = "#FFC300"),
+                 FGFR2_exp = colorRamp2(c(0, 3, 6), c("white","yellow","red")),
+                 FGFR2_RE_type = c("In-frame fusion" = "#660000", "Out-of-frame" =  "#F90708", "Intergenic space" = "#FF66FF"),
+                 Partner_location = c("Chr-10" = "#469990", "Other" = "#e6beff"),
+                 FGFR2_E18_C3_usage= c("TRUE" = "#886A08"),
+                 E18_C3_junction_reads = colorRamp2(c(0, 0.15, 0.6), c("white","yellow","red")),
+                 FGFR2_E18_C4_usage =  c("TRUE" = "#99CCFF"),
+                 E18_C4_junction_reads = colorRamp2(c(0, 0.04, 0.1), c("white","yellow","red")))
+
+ha = HeatmapAnnotation(Tumor_type = anno_simple(df_ExtFig4d$Tumor_type, col = col_annot$Tumor_type),
+                       FGFR2_E18_truncating_mut = anno_simple(df_ExtFig4d$FGFR2_E18_truncating_mut, col = col_annot$FGFR2_E18_truncating_mut, na_col = "white"),
+                       FGFR2_amp = anno_simple(df_ExtFig4d$FGFR2_amp, col = col_annot$FGFR2_amp, na_col = "white"),
+                       FGFR2_exp = anno_simple(df_ExtFig4d$FGFR2_exp, col = col_annot$FGFR2_exp, na_col = "gray"),
+                       FGFR2_RE_type = anno_simple(df_ExtFig4d$FGFR2_RE_type, col = col_annot$FGFR2_RE_type, na_col = "white"),
+                       Partner_location = anno_simple(df_ExtFig4d$Partner_location, col = col_annot$Partner_location, na_col = "white"),
+                       FGFR2_E18_C3_usage = anno_simple(factor(df_ExtFig4d$FGFR2_E18_C3_usage), col = col_annot$FGFR2_E18_C3_usage, na_col = "white"),
+                       E18_C3_junction_reads = anno_simple(df_ExtFig4d$E18_C3_junction_reads, col = col_annot$E18_C3_junction_reads, na_col = "white"),
+                       FGFR2_E18_C4_usage = anno_simple(factor(df_ExtFig4d$FGFR2_E18_C4_usage), col = col_annot$FGFR2_E18_C4_usage, na_col = "white"),
+                       E18_C4_junction_reads = anno_simple(df_ExtFig4d$E18_C4_junction_reads, col = col_annot$E18_C4_junction_reads, na_col = "white"))
+
+ha_lgd = list(lgd_TCGA = Legend(title = "Tumor type", legend_gp = gpar(fill = col_annot$Tumor_type), at = names(col_annot$Tumor_type), nrow = 3),
+              lgd_mut = Legend(title = "FGFR2 E18 truncating mut", legend_gp = gpar(fill = col_annot$FGFR2_E18_truncating_mut), 
+                               at = names(col_annot$FGFR2_E18_truncating_mut)),
+              lgd_amp = Legend(title = "FGFR2 amp", legend_gp = gpar(fill = col_annot$FGFR2_amp), at = names(col_annot$FGFR2_amp)),
+              lgd_exp = Legend(title = "FGFR2 exp", col_fun = col_annot$FGFR2_exp, at = c(0,3,6)),
+              lgd_RE_type = Legend(title = "FGFR2 RE type", legend_gp = gpar(fill = col_annot$FGFR2_RE_type), at = names(col_annot$FGFR2_RE_type)),
+              lgd_RE_chr = Legend(title = "Partner location", legend_gp = gpar(fill = col_annot$Partner_location), at = names(col_annot$Partner_location)),
+              lgd_C3_high = Legend(title = "FGFR2-E18-C3 usage", legend_gp = gpar(fill = col_annot$FGFR2_E18_C3_usage), at = names(col_annot$FGFR2_E18_C3_usage)),
+              lgd_C3_ratio = Legend(title = "E18-C3 junction reads", col_fun = col_annot$E18_C3_junction_reads, at = c(0,0.2,0.4,0.6)),
+              lgd_C4_high = Legend(title = "FGFR2-E18-C4 usage", legend_gp = gpar(fill = col_annot$FGFR2_E18_C4_usage), at = names(col_annot$FGFR2_E18_C4_usage)),
+              lgd_C4_ratio = Legend(title = "E18-C4 junction reads", col_fun = col_annot$E18_C4_junction_reads, at = c(0, 0.05, 0.1)))
+
+ht = Heatmap(matrix = matrix(nrow=0, ncol = nrow(df_ExtFig4d)), top_annotation = ha, 
+             column_title = paste("TCGA cohort - FGFR2 E18-truncations (n=", nrow(df_ExtFig4d), ")", sep = ""))
+
+Ext_Fig4d = draw(ht, annotation_legend_side = "bottom", annotation_legend_list = ha_lgd)
+```
+
+# Ext Fig 4e
+Frequencies of truncation types per tumor type  
+```{r, fig.width = 8}
+df_vars = df_ExtFig4d %>% 
+  mutate(vars = rep(NA, nrow(.)),
+         vars = replace(vars, FGFR2_E18_C4_usage == T, "E18-C4 usage"),
+         vars = replace(vars, FGFR2_E18_C3_usage == T, "E18-C3 usage"),
+         vars = replace(vars, !is.na(FGFR2_E18_truncating_mut), "E18-truncating mut"),
+         vars = ifelse(!is.na(FGFR2_RE_type), as.character(FGFR2_RE_type), vars),
+         vars = factor(vars, levels = rev(c("E18-C3 usage", "E18-C4 usage", "E18-truncating mut", "In-frame fusion", "Out-of-frame", "Intergenic space")))) %>%
+  select(TCGA_code_all, vars) %>% group_by(TCGA_code_all, vars) %>% summarise(n = n())
+
+TCGA_samp = read.table("~/FGFR/Daniel/R/Nature_figures/data/TCGA/cBioportal_alterations_across_samples.tsv", header = T, stringsAsFactors = F, sep = "\t") %>%
+  mutate(TCGA_code = toupper(stringr::str_split_fixed(Study.ID, "_", 2)[,1])) %>% pull(TCGA_code)
+TCGA_samp = table(TCGA_samp)
+
+df_vars$perc = (100*df_vars$n) / TCGA_samp[match(df_vars$TCGA_code_all, names(TCGA_samp))]
+df_vars$TCGA_code_all = factor(df_vars$TCGA_code_all,
+                               levels = (df_vars %>% summarise(perc_all = sum(perc)) %>% arrange(desc(perc_all)) %>% pull(TCGA_code_all)))
+
+p_REs_tumor_type_1 = ggplot(df_vars, aes(x = TCGA_code_all, y = perc, fill = vars)) + geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  scale_fill_manual(values = c("E18-C3 usage" = "#886A08", "E18-C4 usage" = "#99CCFF", "E18-truncating mut" = "#0C5D08", 
+                               "In-frame fusion" = "#660000", "Out-of-frame" = "#F90708", "Intergenic space" = "#FF66FF"))
+
+p_REs_tumor_type_2 = ggplot(df_vars, aes(x = TCGA_code_all, y = perc, fill = vars)) + geom_bar(position = "fill", stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  scale_fill_manual(values = c("E18-C3 usage" = "#886A08", "E18-C4 usage" = "#99CCFF", "E18-truncating mut" = "#0C5D08", 
+                               "In-frame fusion" = "#660000", "Out-of-frame" = "#F90708", "Intergenic space" = "#FF66FF"))
+Ext_Fig4e = cowplot::plot_grid(p_REs_tumor_type_1, p_REs_tumor_type_2, ncol = 1)
+Ext_Fig4e
+
+#source
+df_ExtFig4e = df_vars
+```
+
+# source data
+```{r}
+xlsx::write.xlsx2(df_ExtFig4c, "~/FGFR/Daniel/R/Nature_figures/sources/TCGA_ExtFig4.xlsx", sheetName = "Ext_Fig4c", row.names = F)
+xlsx::write.xlsx2(df_ExtFig4d, "~/FGFR/Daniel/R/Nature_figures/sources/TCGA_ExtFig4.xlsx", sheetName = "Ext_Fig4d", row.names = F, append = T)
+xlsx::write.xlsx2(data.frame(df_ExtFig4e), "~/FGFR/Daniel/R/Nature_figures/sources/TCGA_ExtFig4.xlsx", sheetName = "Ext_Fig4e", row.names = F, append = T)
+```
+
+

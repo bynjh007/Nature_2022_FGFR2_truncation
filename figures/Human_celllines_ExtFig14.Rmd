@@ -1,0 +1,273 @@
+---
+title: "Human cellines Ext Fig14"
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraries
+```{r}
+library(R.utils)
+library(dplyr)
+library(circlize)
+library(ComplexHeatmap)
+library(stringr)
+library(ggplot2)
+```
+
+# IC50/Expression/CNV data
+```{r}
+# IC50 for FGFR2
+IC50 = read.table("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/IC50.txt", header = T, sep = "\t", stringsAsFactors = F)
+rownames(IC50) = IC50$IC50..nM.
+IC50 = data.matrix(IC50[,-1])
+IC50 = IC50[, c(1,4,2,3,5)]
+colnames(IC50) = c("AZD4547", "Pemigatinib", "BGJ398", "Debio1347", "Average")
+
+# gene expression data
+samp_label_cell_RNAseq = read.table("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/samples.cell_line.csv", sep = ",", header = T, stringsAsFactors = F)
+cnt = read.table("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/merged.gene.txt", header = T, stringsAsFactors = F, sep = "\t")
+rownames(cnt) = cnt$Geneid
+cnt = cnt[, 7:ncol(cnt)]
+colnames(cnt) = samp_label_cell_RNAseq$SAMPLE_ID
+
+library(edgeR)
+y=DGEList(counts = cnt)
+keep=rowSums(cpm(y)>1) >= (dim(cnt)[2]*0.1)
+y=y[keep, , keep.lib.sizes=FALSE]
+y=calcNormFactors(y)
+RNA_cpm=cpm(y)
+
+exp_FGFR = rbind(RNA_cpm[grep("ENSG00000077782", rownames(RNA_cpm)), ], 
+                 RNA_cpm[grep("ENSG00000066468", rownames(RNA_cpm)), ],
+                 RNA_cpm[grep("ENSG00000068078", rownames(RNA_cpm)), ],
+                 RNA_cpm[grep("ENSG00000160867", rownames(RNA_cpm)), ])
+rownames(exp_FGFR) = c("FGFR1", "FGFR2", "FGFR3", "FGFR4")
+colnames(exp_FGFR) = str_split_fixed(colnames(exp_FGFR), "_", 5)[,3]
+exp_FGFR = exp_FGFR[, match(rownames(IC50), colnames(exp_FGFR))]
+
+# compsite value
+gmean_norm = function(x){(x-exp(mean(log(x))))/sd(x)} 
+exp_FGFR_comp = colSums(rbind(gmean_norm(exp_FGFR[1,]+1), 
+                              gmean_norm(exp_FGFR[2,]+1),
+                              gmean_norm(exp_FGFR[3,]+1),
+                              gmean_norm(exp_FGFR[4,]+1)))
+
+# copy number data
+cnv_FGFR = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/Human_celllines_CNV.RData")[["cnv_FGFR"]]
+cnv_FGFR = cnv_FGFR[, match(rownames(IC50), colnames(cnv_FGFR))]
+```
+
+# RNA-seq based rearrangement
+```{r}
+# STAR-Fusion & Chimeric alignments
+load("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/Human_celllines_RE.RData")
+
+# all the breakpoint from STAR-Fusion is ref:in-strand type
+t_right = str_split_fixed(FGFR2_star_fusion$right_annot, ":", 5)
+t_right[,3] = paste("I", as.numeric(str_split_fixed(t_right[,3], " ", 2)[,2])-1, sep = "")
+t_right = apply(t_right, 1, paste, collapse = ":")
+a = FGFR2_star_fusion %>% mutate(Source = "star_fusion",
+                                 FGFR2_upstream = ifelse(startsWith(X.FusionName, "FGFR2"), "upstream", "downstream"),
+                                 RE_type = ifelse(PROT_FUSION_TYPE == "INFRAME", "inframe", "out-of-frame"),
+                                 RE_loc = ifelse(grepl("Exon 17:ref:in-strand", left_annot), "I17", "5' to E17"),
+                                 C_trunc = LeftBreakpoint %in% "chr10:121483698:-",
+                                 left_annot = gsub("Exon ", "I", left_annot),
+                                 right_annot = t_right) %>%
+  select(X.FusionName, LeftBreakpoint, RightBreakpoint, JunctionReadCount, FFPM, sample_id, RE_type, FGFR2_upstream, 
+         C_trunc, RE_loc, left_annot, right_annot, Source)
+colnames(a) = c("Fusion_name", "LeftBreakpoint", "RightBreakpoint", "Junc_count", "FFPM", "Sample_id", "RE_type", 
+                "FGFR2_upstream", "C_trunc", "RE_loc", "left_annot", "right_annot", "Source")
+
+# extract fusion information from RE_from_chimeric (** note that brkpt from RE_from_chimeric is one base different with star-fusion results **)
+b = FGFR2_RE %>% mutate(Source = "RE_from_chimeric",
+                        up.id = as.character(up.id), up.id = gsub("Exon ", "E", up.id), up.id = gsub("Intron ", "I", up.id),
+                        up.id = ifelse(up.splice_type == "ref:in-strand", gsub("E", "I", up.id), up.id),
+                        down.id = as.character(down.id), down.id = gsub("Exon ", "E", down.id), down.id = gsub("Intron ", "I", down.id),
+                        down.id = ifelse(down.splice_type == "ref:in-strand", 
+                                         paste("I", as.numeric(str_split_fixed(down.id, "E", 2)[,2])-1, sep = ""), down.id),
+                        Fusion_name = paste(up.symbol, down.symbol, sep = "--"),
+                        LeftBreakpoint = up.brkpt, RightBreakpoint = down.brkpt, Junc_count = count,
+                        FFPM = FFPM, Sample_id = sample_id,
+                        FGFR2_upstream = ifelse(startsWith(Fusion_name, "FGFR2"), "upstream", "downstream"),
+                        RE_loc = ifelse(startsWith(Fusion_name, "FGFR2"), up.id, down.id),
+                        RE_loc = replace(RE_loc, RE_loc != "I17" & RE_loc!="E18", "5' to E17"),
+                        C_trunc_can = ((up.brkpt %in% "chr10:121483698:-") & (up.splice_type %in% "ref:in-strand") & (up.symbol %in% "FGFR2")),
+                        C_trunc_noncan = ((RE_loc %in% "I17") & (up.splice_type %in% "non_ref:in-strand") & (up.symbol %in% "FGFR2")),
+                        C_trunc = ((RE_loc %in% "I17") & grepl("in-strand", up.splice_type) & (up.symbol %in% "FGFR2")),
+                        t_type = paste(up.splice_type, down.splice_type, sep = "//"),
+                        RE_type = rep(NA, nrow(FGFR2_RE)),
+                        RE_type = replace(RE_type, grepl("in-strand", t_type) & grepl("out-of-strand", t_type), "out-of-strand"),
+                        RE_type = replace(RE_type, grepl("intergenic", t_type), "intergenic"),
+                        RE_type = replace(RE_type, grepl("in-strand", up.splice_type) & grepl("in-strand", down.splice_type), "out-of-frame"),
+                        
+                        left_annot = paste(up.symbol, up.txname, up.id, up.splice_type, sep = ":"),
+                        right_annot = paste(down.symbol, down.txname, down.id, down.splice_type, sep = ":")) %>%
+  select(Fusion_name, LeftBreakpoint, RightBreakpoint, Junc_count, FFPM, Sample_id, RE_type, FGFR2_upstream, 
+         C_trunc, RE_loc, left_annot, right_annot, Source)
+
+# combine the RE and Fusions
+FGFR2_RE_all = rbind(a,b)
+
+# remove out-of-strand fusion from upstream
+FGFR2_RE_all = FGFR2_RE_all %>% filter(grepl("in-strand", left_annot)) %>%
+  mutate(Sample_id = str_split_fixed(Sample_id, "_", 5)[,3],
+         RE_type = factor(RE_type, levels = c("inframe", "out-of-frame", "intergenic", "out-of-strand")))
+
+# RE prioritization (selecting the most dominant REs based on the junction read counts)
+FGFR2_RE_all_rep = c()
+for(i in 1:nrow(IC50)){
+  t = FGFR2_RE_all %>% filter(Sample_id == rownames(IC50)[i]) %>%
+    arrange(desc(C_trunc), desc(Junc_count))
+  t = rbind(t[!grepl("[.]", t$Fusion_name),], t[grepl("[.]", t$Fusion_name),])
+  if(nrow(t)>0){
+    if(t$RE_type[1] == "intergenic" & t$C_trunc[1] == TRUE){
+      t = t %>% 
+          filter(RE_type == "intergenic", C_trunc ==T, grepl("121483698", LeftBreakpoint)) %>%
+          mutate(Junc_count = sum(Junc_count))
+    }
+  }
+  FGFR2_RE_all_rep = rbind(FGFR2_RE_all_rep, t[1,])
+}
+rownames(FGFR2_RE_all_rep) = rownames(IC50)
+```
+
+# E17 spanning junctions
+Five major junctions: 
+- chr10:121479671-121483697 - C4  
+- chr10:121480022-121483697 - C1  
+- chr10:121480114-121483697 - C2  
+- chr10:121480313-121483697 - 52 : unknown  
+- chr10:121482178-121483697 - C3  
+```{r}
+colnames(E17_junc_cnt) = str_split_fixed(colnames(E17_junc_cnt), "_", 5)[,3]
+E17_junc_cnt = E17_junc_cnt[,match(rownames(IC50), colnames(E17_junc_cnt))]
+
+E17_junc_cnt_target = E17_junc_cnt[which(E17_junc_list$sum_cnt >=10),]
+rownames(E17_junc_cnt_target) = c("C4", "C1", "C2", "C?", "C3")
+E17_junc_cnt_target = E17_junc_cnt_target[order(rownames(E17_junc_cnt_target)),]
+
+# add RE junction reads
+E17_junc_cnt_target_comb = rbind(E17_junc_cnt_target,
+                            FGFR2_RE_all_rep$Junc_count)
+E17_junc_cnt_target_comb[6, which(FGFR2_RE_all_rep$C_trunc!= T)] = NA
+E17_junc_cnt_target_comb[is.na(E17_junc_cnt_target_comb)] = 0
+rownames(E17_junc_cnt_target_comb) = c(rownames(E17_junc_cnt_target_comb)[1:5], "RE")
+
+# select known junction
+E17_junc_cnt_target_comb = E17_junc_cnt_target_comb[-1,]
+```
+
+# E17 exon expression
+```{r}
+# E17 exon expression
+FGFR2_exon_exp = loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Human_celllines/Human_celllines_expression.RData")[["FGFR2_exon_cell"]]
+FGFR2_exon_exp_C3 = log2(FGFR2_exon_exp$RPKM[2,]+1)
+FGFR2_exon_exp_C3 = FGFR2_exon_exp_C3[match(rownames(IC50), names(FGFR2_exon_exp_C3))]
+```
+
+# Ext Fig 14c 
+C1-C4, RE ratio  
+```{r}
+t_cnt_IGR = rep(NA, ncol(E17_junc_cnt_target))
+t_cnt_IF = rep(NA, ncol(E17_junc_cnt_target))
+t_cnt_OF = rep(NA, ncol(E17_junc_cnt_target))
+for(i in 1:ncol(E17_junc_cnt_target)){
+    t_re = FGFR2_RE_all %>% filter(Sample_id == colnames(E17_junc_cnt_target)[i], grepl("121483698", LeftBreakpoint))
+    t_cnt_IGR[i] = sum(t_re %>% filter(RE_type == "intergenic") %>% pull(Junc_count))
+    t_cnt_IF[i] = sum(t_re %>% filter(RE_type == "inframe") %>% pull(Junc_count))
+    t_cnt_OF[i] = sum(t_re %>% filter(RE_type == "out-of-frame") %>% pull(Junc_count))
+}
+
+df = rbind(E17_junc_cnt_target[2:5,], t_cnt_IF, t_cnt_OF, t_cnt_IGR)
+rownames(df) = c("E18-C1", "E18-C2", "E18-C3", "E18-C4", "COL14A1 (in-frame)", "LINC01153 (out-of-frame)", "IGRs")
+
+df_ExtFig14c = t(apply(df, 1, function(x){x/colSums(df)}))
+df_ExtFig14c[is.na(df_ExtFig14c)] = 0
+
+df_cnt = rbind(data.frame(cell = colnames(df), cnt = df[1,], group = rownames(df)[1]),
+               data.frame(cell = colnames(df), cnt = df[2,], group = rownames(df)[2]),
+               data.frame(cell = colnames(df), cnt = df[3,], group = rownames(df)[3]),
+               data.frame(cell = colnames(df), cnt = df[4,], group = rownames(df)[4]),
+               data.frame(cell = colnames(df), cnt = df[5,], group = rownames(df)[5]),
+               data.frame(cell = colnames(df), cnt = df[6,], group = rownames(df)[6]),
+               data.frame(cell = colnames(df), cnt = df[7,], group = rownames(df)[7])) %>% 
+    mutate(cell = factor(cell, levels = colnames(df))) %>%
+    filter(cell %in% c("MFM-223", "SNU-16", "KATO-III", "SUM52PE", "NCI-H716"))%>%
+    mutate(group = factor(group, levels = rownames(df)))
+
+ExtFig14c = ggplot(df_cnt, aes(x = cell, y = cnt, fill = group)) + 
+  geom_bar(position = "fill", stat = "identity", size = 0.5, width = 0.8) + 
+  scale_fill_manual(values = c("#808080", "#CCCCCC", "#886A08", "#99CCFF", "#660000", "red", "#FF66FF")) + theme_classic() + 
+  theme(axis.text.x=element_text(angle=60, hjust=1))
+
+ExtFig14c
+```
+
+# Ext Fig 14b
+Heatmap for FGFR alterations  
+```{r, fig.width = 8, fig.height = 10}
+# Heatmap for log10 scale IC50 
+t_IC50 = log10(IC50[,1:4])
+rownames(t_IC50) = rownames(IC50)
+h1 = Heatmap(t(t_IC50),  cluster_rows = F, cluster_columns = F, name = "IC50", border = T,
+             show_column_names = T, column_names_side = "top",
+              col = colorRamp2(c(0,2,4), c("blue", "white", "red")), 
+             row_names_gp = gpar(fontsize = 10))
+              #row_names_gp = gpar(fontsize = 10),heatmap_height = unit(4, "cm"))
+
+# Heatmap for FGFR CNV
+h2 = Heatmap(log2(cnv_FGFR),  cluster_rows = F, cluster_columns = F, name = "CNV", border = T,
+              col = colorRamp2(c(0,1.5,7), c("white", "yellow", "red")), 
+              row_names_gp = gpar(fontsize = 10))
+             #,heatmap_height = unit(3, "cm"))
+
+# Heatmap for FGFR expression
+h3 = Heatmap(log2(exp_FGFR+1), cluster_rows = F, cluster_columns = F, 
+              col = colorRamp2(c(0,3,12), c("white", "yellow", "red")), name = "Gene", border = T,
+              row_names_gp = gpar(fontsize = 10))
+             #heatmap_height = unit(3, "cm"))
+
+# Heatmap for FGFR C3 expression
+t = t(FGFR2_exon_exp_C3)
+rownames(t) = "FGFR2 E18-C3"
+h4 = Heatmap(t, cluster_rows = F, cluster_columns = F, 
+              col = colorRamp2(c(0,2,5), c("white", "yellow", "red")), name = "E18-C3 exp", border = T,
+              row_names_gp = gpar(fontsize = 10))
+             #heatmap_height = unit(3, "cm"))
+
+# Heatmap for FGFR junction CPM
+# normalized junction counts (normalized by total number of reads)
+total_reads = colSums(cnt)
+names(total_reads) = stringr::str_split_fixed(names(total_reads), "_", 4)[,3]
+total_reads = total_reads[match(colnames(df), names(total_reads))]
+E17_junc_cpm_target_comb = log2(t(apply(df, 1, function(x){(x*10^6)/total_reads}))+1)
+
+h5 = Heatmap(E17_junc_cpm_target_comb, cluster_rows = F, cluster_columns = F, 
+              col = colorRamp2(c(0, 2, 6), c("white", "yellow", "red")), name = "E17-Junction exp", border = T,
+              row_names_gp = gpar(fontsize = 10))
+             #heatmap_height = unit(3, "cm"))
+
+t_mat = rbind(df_ExtFig14c[1,], df_ExtFig14c[2,], colSums(df_ExtFig14c[3:nrow(df_ExtFig14c),]))
+rownames(t_mat) = c("C1", "C2", "C3/C4/REs") 
+h6 = Heatmap(t_mat, cluster_rows = F, cluster_columns = F,
+             col = colorRamp2(c(0,0.15,1), c("#FCFFC9", "#C25E2F", "#1D0B14")), name = "C1 vs C2 vs C3/C4/REs", 
+             border = T, row_names_gp = gpar(fontsize = 10), show_column_names = T)
+
+ExtFig14b = h1 %v% h2 %v% h3 %v% h4 %v% h5 %v% h6
+ExtFig14b
+```
+
+# source data
+```{r}
+df_ExtFig14b = rbind(t(t_IC50), log2(cnv_FGFR),
+                      log2(exp_FGFR+1), t(FGFR2_exon_exp_C3),
+                      E17_junc_cpm_target_comb, t_mat)
+
+
+xlsx::write.xlsx2(df_ExtFig14b, "~/FGFR/Daniel/R/Nature_figures/sources/Human_cellines_ExtFig14.xlsx", sheetName = "Ext_Fig14b", row.names = T)
+xlsx::write.xlsx2(df_ExtFig14c, "~/FGFR/Daniel/R/Nature_figures/sources/Human_cellines_ExtFig14.xlsx", sheetName = "Ext_Fig14c", row.names = T, append = T)
+```
+

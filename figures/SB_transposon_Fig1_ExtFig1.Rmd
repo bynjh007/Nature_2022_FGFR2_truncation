@@ -1,0 +1,114 @@
+---
+title: "SB_transposon Fig1 & Ext_Fig1 "
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraries
+```{r}
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+```
+
+# Mouse Fgfr2 locus information
+```{r}
+Fgfr2_exon_info = read.table("~/FGFR/Daniel/R/Nature_figures/data/SB_transposon/NM_010207.2.txt", header = F, stringsAsFactors = F, sep = "\t")
+colnames(Fgfr2_exon_info) = c("chr", "start", "end", "unit")
+Fgfr2_trx_info = c()
+for(i in 1:(nrow(Fgfr2_exon_info)-1)){
+  int_s = Fgfr2_exon_info[i+1,3]+1
+  int_e = Fgfr2_exon_info[i,2]-1
+  Fgfr2_trx_info = rbind(Fgfr2_trx_info, Fgfr2_exon_info[i,], 
+                         data.frame(chr = "chr7", start = int_s, end = int_e, unit = paste("Intron", i)))
+}
+Fgfr2_trx_info = rbind(Fgfr2_trx_info, tail(Fgfr2_exon_info,1))
+Fgfr2_trx_info$width = Fgfr2_trx_info$end - Fgfr2_trx_info$start
+```
+
+# SB transposon data
+```{r}
+Fgfr2_sb = read.table("~/FGFR/Daniel/R/Nature_figures/data/SB_transposon/Fgfr2_insertion.txt", header = T, stringsAsFactors = F, sep = "\t")
+start_end = c(min(c(Fgfr2_trx_info$start, Fgfr2_trx_info$end)),
+              max(c(Fgfr2_trx_info$start, Fgfr2_trx_info$end)))
+Fgfr2_sb = Fgfr2_sb %>% filter(position >= start_end[1], position <= start_end[2])
+```
+
+# Ext Fig 1a
+Unit-level normalization for testing significance of number of insertions  
+```{r, fig.width = 8, fig.height = 5}
+##################################################
+# Unit-level normalization for number of insertions
+##################################################
+t = numeric(nrow(Fgfr2_trx_info))
+for(i in 1:nrow(Fgfr2_sb)){
+  t = t + as.numeric(Fgfr2_trx_info$start<=Fgfr2_sb$position[i] & Fgfr2_trx_info$end>=Fgfr2_sb$position[i])
+}
+Fgfr2_trx_info$n = t
+Fgfr2_trx_info$n_kb = (1000*Fgfr2_trx_info$n)/(Fgfr2_trx_info$width * length(unique(Fgfr2_sb$id)))
+
+# binomial test
+prob_bino = Fgfr2_trx_info$width/sum(Fgfr2_trx_info$width)
+pval_bino = numeric(nrow(Fgfr2_trx_info))
+for(i in 1:length(prob_bino)){
+  t = binom.test(x = Fgfr2_trx_info$n[i], n = sum(Fgfr2_trx_info$n), p = prob_bino[i], alternative = "greater")
+  pval_bino[i] = t$p.value
+}
+
+df_sv_bar = data.frame(lab = Fgfr2_trx_info$unit, n_kb = Fgfr2_trx_info$n_kb, pval = -log10(pval_bino))
+df_sv_bar_along = gather(df_sv_bar, key="measure", value="value", c("n_kb", "pval"))
+df_sv_bar_along$lab = factor(df_sv_bar_along$lab, levels = df_sv_bar$lab)
+
+ExtFig1a = ggplot(df_sv_bar_along, aes(x=lab, y=value)) + geom_bar(stat='identity')+
+  facet_wrap(~measure,  ncol=1, scales = "free") + theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ExtFig1a
+df_ExtFig1a = data.frame(lab = Fgfr2_trx_info$unit, n_kb = Fgfr2_trx_info$n_kb, pval = pval_bino)
+```
+
+# Fig 1c
+Locations of SB insertions in FGFR2
+```{r, fig.width=7, fig.height=5}
+brkpt = rep(0, length(1:(130266808 - 130162450)))
+
+ins_pos = Fgfr2_sb$position - 130162450
+for(i in ins_pos){
+  brkpt = brkpt + as.numeric(1:length(brkpt) %in% i)
+}
+
+# sliding window
+bin_size = 500
+a = rep(NA, length(brkpt))
+for(i in 1:length(brkpt)){
+  a[i] = sum(brkpt[i:(bin_size+i)])
+}
+Fig1c = barplot(rev(a), ylim = c(0, 20))
+df_Fig1c = Fgfr2_sb[, c("id", "chromosome", "position", "strand", "sample")]
+```
+
+
+# Fig 1e
+Proportion of truncating insertions from RNA-seq data
+```{r, fig.width = 8, fig.height = 5}
+
+df_Fig1e = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/SB_transposon/SB_transposon_junctions.RData")[["ratio_all"]]
+
+Fig1e = ggplot(df_Fig1e, aes(fill = annot, y = ratio, x = sample)) + geom_bar(position = "stack", stat = "identity") + theme_classic() +
+  scale_fill_manual(values=c("E17-E18_antisense" = "#BAB6B7", "E17-E18_sense" = "#BAB6B7", "E17-TP_antisense" = "#FF0000", "E17-TP_sense" = "#2E5A9E")) +
+  geom_hline(yintercept=median(df_Fig1e$ratio[df_Fig1e$type == "E17-TP"]), linetype="dashed", color = "black", size=0.5)+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+Fig1e
+```
+
+# source data
+```{r}
+xlsx::write.xlsx(df_ExtFig1a, file = "~/FGFR/Daniel/R/Nature_figures/sources/SB_ExtFig1.xlsx", sheetName = "Ext_Fig1a", row.names = F)
+xlsx::write.xlsx(df_Fig1c, file = "~/FGFR/Daniel/R/Nature_figures/sources/SB_Fig1.xlsx", sheetName = "Fig1c", row.names = F)
+xlsx::write.xlsx(df_Fig1e, file = "~/FGFR/Daniel/R/Nature_figures/sources/SB_Fig1.xlsx", sheetName = "Fig1e", row.names = F, append = T)
+```
+

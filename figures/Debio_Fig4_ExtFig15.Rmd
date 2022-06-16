@@ -1,0 +1,370 @@
+---
+title: "Debio Fig4 & ExtFig15"
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraires
+```{r}
+library(xlsx)
+library(ggplot2)
+library(edgeR)
+library(ggpubr)
+library(ComplexHeatmap)
+library(circlize)
+library(stringr)
+library(dplyr)
+library(patchwork)
+```
+
+# CrownBio data
+```{r}
+gene_fusions = read.csv2("~/FGFR/Daniel/R/Nature_figures/data/Debio/CrownBio_gene fusion.csv", header = T, sep = ",", stringsAsFactors = F)
+FGF_cnv = read.table("~/FGFR/Daniel/R/Nature_figures/data/Debio/CrownBio_FGF3_4_19_CNV.txt", header = T, sep = "\t", stringsAsFactors = F)
+FGFR_mutations = read.csv2("~/FGFR/Daniel/R/Nature_figures/data/Debio/CrownBio_Genomic Data.csv", header = T, sep = ",", stringsAsFactors = F)
+```
+
+# RNA-seq from Debio PDX
+```{r}
+# junction & RE information from Debio RNA-seq
+E17_junc_cnt = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_FGFR2_junction_processing.RData")[["E17_junc_cnt"]]
+E17_junc_list = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_FGFR2_junction_processing.RData")[["E17_junc_list"]]
+colnames(E17_junc_cnt) = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_FGFR2_junction_processing.RData")[["path_file"]]
+
+# FGFR expression from Debio RNA-seq
+samp_info_RNA = read.table("~/FGFR/Daniel/R/Nature_figures/data/Debio/samples.csv", header = T, stringsAsFactors = F, sep = "\t")
+
+# gene expression
+t = read.table("~/FGFR/Daniel/R/Nature_figures/data/Debio/merged.gene.txt", header = T, stringsAsFactors = F, sep = "\t")
+rownames(t) = t$Geneid
+rna_info = t[,1:6]
+t = data.matrix(t[, 7:ncol(t)])
+dge=DGEList(counts = t)
+keep=rowSums(cpm(dge)>=1)>=(dim(t)[2]*0.2)
+dge=dge[keep, , keep.lib.sizes=FALSE]
+dge=calcNormFactors(dge)
+genes_exp = cpm(dge, log = F)
+colnames(genes_exp) = samp_info_RNA$SAMPLE_ID
+rna_info_exp = rna_info[keep,]
+
+FGFR_gene = genes_exp[c(grep("ENSG00000077782", rownames(genes_exp)), # FGFR1
+                        grep("ENSG00000066468", rownames(genes_exp)), # FGFR2
+                        grep("ENSG00000068078", rownames(genes_exp)), # FGFR3
+                        grep("ENSG00000160867", rownames(genes_exp))),] # FGFR4
+
+colnames(FGFR_gene) = samp_info_RNA$SAMPLE_ID
+rownames(FGFR_gene) = c("FGFR1", "FGFR2", "FGFR3", "FGFR4")
+
+# exon expression
+t = read.table("~/FGFR/Daniel/R/Nature_figures/data/Debio/merged.exon.txt", header = T, stringsAsFactors = F, sep = "\t")
+t = t %>% filter(Chr == "chr10", Start >=121478334, End <= 121598458,  Strand == "-") %>% arrange(Start) 
+FGFR2_exon = list(exon_info = t[, 1:6], exon_exp = t[, 7:ncol(t)])
+colnames(FGFR2_exon$exon_exp) = samp_info_RNA$SAMPLE_ID
+
+# check sample order across exon, junction, and gene expression
+all(colnames(FGFR_gene) == colnames(FGFR2_exon$exon_exp))
+all(colnames(FGFR_gene) == colnames(E17_junc_cnt))
+```
+
+# PDX drug response & FGFR1-4 FISH data from Debio
+```{r}
+# Debio FGFRi response and FGFR FISH data
+samp_resp = read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/Debio/Codes for PDX models Debio 1347_20211208.xlsx", sheetIndex = 1, header = T)
+samp_resp$DT.DC = as.numeric(as.character(samp_resp$DT.DC))
+samp_resp = samp_resp[order(samp_resp$DT.DC),]
+samp_resp = samp_resp %>% mutate(FGFR1_cnv = as.numeric(as.character(FGFR1_cnv)),
+                                 FGFR2_cnv = as.numeric(as.character(FGFR2_cnv)),
+                                 FGFR3_cnv = as.numeric(as.character(FGFR3_cnv)), 
+                                 FGFR4_cnv = as.numeric(as.character(FGFR4_cnv)))
+# re-naming of tumor type
+t = as.character(samp_resp$Histotype)
+t[t=="ES"] = "ESCA"; t[t=="GA"] = "STAD"
+t[t=="LU"] = "LUAD/LUSC"; t[t=="CR"] = "COAD"
+t[t=="BR"] = "BRCA"; t[t=="BL"] = "BLCA"
+t[t=="PA"] = "PAAD"; t[t=="LI"] = "LIHC"
+t[t=="HN"] = "HNSC"; t[t=="KI"] = "KIRC"
+t[t=="GL"] = "CHOL"; t[t=="BN"] = "GBM"
+samp_resp$Histotype = t
+
+# overlapping samples between drug response and RNA-seq
+ovp_samp  = intersect(unique(substr(colnames(FGFR_gene), 1, 6)), samp_resp$Model.name)
+samp_resp_ovp = samp_resp[match(ovp_samp, samp_resp$Model.name),]
+samp_resp_ovp$Histotype = factor(samp_resp_ovp$Histotype, levels = unique(as.character(samp_resp_ovp$Histotype)))
+samp_resp_ovp$response = factor(samp_resp_ovp$DT.DC<0)
+
+# CNV status (FISH)
+t1 = c("normal", NA, NA, "normal", NA, NA, NA, "normal", NA, "normal", "amplified", "polysomy", "polysomy", "polysomy", "polysomy", "polysomy", NA, NA, NA, NA, "polysomy",
+       NA, "amplified", NA, NA, "polysomy", "normal", NA, NA, "polysomy", NA, NA, "polysomy", "polysomy", NA, "amplified")
+t2 = c("normal", NA, NA, NA, "normal", "amplified", "polysomy", NA, "polysomy", NA, NA, NA, NA, NA, NA, NA, "normal", "amplified", "amplified", "amplified",
+       NA, NA, NA, "normal", NA, NA, NA, NA, "normal", "normal", "normal", NA, "normal", NA, NA, NA)
+t3 = c("normal", NA, NA, "normal", NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, "polysomy", "normal", NA, "normal", NA, NA, NA, NA, "normal", NA, NA,
+       "amplified", "normal", NA, "normal", NA)
+
+samp_resp_ovp$FGFR1_CN = t1
+samp_resp_ovp$FGFR2_CN = t2
+samp_resp_ovp$FGFR3_CN = t3
+
+samp_resp_ovp$FGFR1_CN[which(samp_resp_ovp$FGFR1_CN == "amplified")] = "amplification"
+samp_resp_ovp$FGFR1_CN[which(samp_resp_ovp$FGFR1_CN == "polysomy")] = "gain"
+samp_resp_ovp$FGFR2_CN[which(samp_resp_ovp$FGFR2_CN == "amplified")] = "amplification"
+samp_resp_ovp$FGFR2_CN[which(samp_resp_ovp$FGFR2_CN == "polysomy")] = "gain"
+samp_resp_ovp$FGFR3_CN[which(samp_resp_ovp$FGFR3_CN == "amplified")] = "amplification"
+samp_resp_ovp$FGFR3_CN[which(samp_resp_ovp$FGFR3_CN == "polysomy")] = "gain"
+```
+
+# Mapping FGFR mutation & FGF amplification of Debio PDX samples
+```{r}
+# FGFR hotspot mutations mapping
+mut_mat = matrix(NA, nrow(samp_resp_ovp), 2)
+for(i in 1:nrow(samp_resp_ovp)){
+    t_df_2 = FGFR_mutations %>% filter(Sample_Name == samp_resp_ovp$Model.name[i], grepl("S252|C382|N549|K659", FGFR2_Mutation)) %>% pull(FGFR2_Mutation)
+    t_df_3 = FGFR_mutations %>% filter(Sample_Name == samp_resp_ovp$Model.name[i], grepl("R248|S249|Y373|K650", FGFR3_Mutation)) %>% pull(FGFR3_Mutation)
+    mut_mat[i,1] = ifelse(length(t_df_2)!=0, "FGFR2", "")
+    mut_mat[i,2] = ifelse(length(t_df_3)!=0, "FGFR3", "")
+}
+mut_mat = paste(mut_mat[,1], mut_mat[,2], sep = "")
+
+samp_resp_ovp = data.frame(samp_resp_ovp, FGFR_hotspot = mut_mat)
+
+# FGF amplification
+a = names(table(FGF_cnv$PDX.MODEL))
+F3 = FGF_cnv %>% filter(GENE == "FGF3")
+F4 = FGF_cnv %>% filter(GENE == "FGF4")
+F19 = FGF_cnv %>% filter(GENE == "FGF19")
+# WES-CNV >=7 issamping amplification
+FGF_coamp = unique(strsplit2(intersect(intersect(F3 %>% filter(Value>=7) %>% pull(PDX.MODEL),
+                                                 F4 %>% filter(Value>=7) %>% pull(PDX.MODEL)),
+                                       F19 %>% filter(Value>=7) %>% pull(PDX.MODEL)), "-")[,1])
+samp_resp_ovp$FGF_amp = samp_resp_ovp$Model.name %in% FGF_coamp
+
+a = names(table(FGF_cnv$PDX.MODEL))
+F3 = FGF_cnv %>% filter(GENE == "FGF3")
+F4 = FGF_cnv %>% filter(GENE == "FGF4")
+F19 = FGF_cnv %>% filter(GENE == "FGF19")
+
+# WES-CNV >=7 is used for defining amplification
+FGF_coamp = unique(strsplit2(intersect(intersect(F3 %>% filter(Value>=7) %>% pull(PDX.MODEL),
+                                                 F4 %>% filter(Value>=7) %>% pull(PDX.MODEL)),
+                                       F19 %>% filter(Value>=7) %>% pull(PDX.MODEL)), "-")[,1])
+samp_resp_ovp$FGF_amp = samp_resp_ovp$Model.name %in% FGF_coamp
+
+```
+
+# Mapping FGFR amplification of Debio PDX samples
+- Five major junctions: * chr10:121479671-121483697 - 130 : C4  
+- chr10:121480022-121483697 - 28762 : C1  
+- chr10:121480114-121483697 - 3236 : C2  
+- chr10:121480313-121483697 - 52 : unknown  
+- chr10:121482178-121483697 - 327 : C3  
+```{r}
+E17_junc_cnt_target = E17_junc_cnt[which(E17_junc_list$sum_cnt >=5),]
+rownames(E17_junc_cnt_target) = c("C4", "C1", "C2", "C?", "C3")
+E17_junc_cnt_target = E17_junc_cnt_target[order(rownames(E17_junc_cnt_target)),]
+E17_junc_ratio_target = t(t(E17_junc_cnt_target) / colSums(E17_junc_cnt_target))
+# select known junction
+E17_junc_ratio_target = E17_junc_ratio_target[-1,]
+
+# junctaion usage (ratio)
+t_junc_rat = E17_junc_ratio_target[, order(E17_junc_ratio_target[2,], decreasing = T)]
+t_junc_rat = t_junc_rat[, match(ovp_samp, substr(colnames(t_junc_rat), 1, 6))]
+```
+
+# Mapping FGFR amplification of Debio PDX samples
+- Some of the FGFR2 amplified tumors estimated by FISH showed low CNV level by WES-based CNV estimation  
+- As these samples are highly expressed, FISH results are probably more reliable than WES-based manner  
+- Amplification was defined by WES-CNV value for the samples with FISH-based gain and amplification –> amplification: FISH-amplification or WES-CNV>=7  
+- Detailed analysis is in “Debio_data_plots_20200804.Rmd”  
+```{r}
+t = samp_resp_ovp %>% mutate(FGFR1_amp = (FGFR1_CN == "amplification" | FGFR1_cnv >=7),
+                             FGFR2_amp = (FGFR2_CN == "amplification" | FGFR2_cnv >=7),
+                             FGFR3_amp = (FGFR3_CN == "amplification" | FGFR3_cnv >=7),
+                             FGFR4_amp = (FGFR4_cnv >=7)) %>%
+  select(FGFR1_amp, FGFR2_amp, FGFR3_amp, FGFR4_amp)
+t[is.na(t)] = FALSE
+samp_resp_ovp = data.frame(samp_resp_ovp, t)
+```
+
+# Ext Fig 15f
+FGFR expression vs FGFRi response
+```{r, fig.width = 10, fig.height = 5}
+# FGFR1-4 expression
+df_ExtFig20e = c()
+p_FGFR_cor = vector("list", 4)
+for(i in 1:4){
+    t_exp = log2(FGFR_gene[i,order(FGFR_gene[i,], decreasing = T)]+1)
+    t_exp = t_exp[match(ovp_samp, substr(names(t_exp),1,6))]
+
+    t2 = cor.test(t_exp, samp_resp_ovp$DT.DC)
+    df = data.frame(FGFR_exp = t_exp, dT.dC = samp_resp_ovp$DT.DC, responsive = samp_resp_ovp$DT.DC<0)
+    df_ExtFig20e = rbind(df_ExtFig20e, data.frame(df, group = sprintf("FGFR%d",i)))
+    p_FGFR_cor[[i]] = ggplot(df, aes(x = FGFR_exp, y = dT.dC)) + geom_point() + theme_classic() + 
+        xlab(sprintf("Log2 FGFR%d (CPM)", i)) + ylab("dT/dC response") + geom_hline(yintercept = 0, size = 0.5, linetype = "dashed") +
+        ggtitle(paste("R = ", round(t2$estimate,3), ",", "P = ", formatC(t2$p.value, digits = 2, format = "e"), sep = ""))
+} 
+
+# FGFR composite expression
+gmean_norm = function(x){(x-exp(mean(log(x))))/sd(x)}
+
+norm_exp = rbind(gmean_norm(FGFR_gene[1,]+1), gmean_norm(FGFR_gene[2,]+1), gmean_norm(FGFR_gene[3,]+1), gmean_norm(FGFR_gene[4,]+1))
+exp_FGFR_comp = colSums(norm_exp)
+names(exp_FGFR_comp) = colnames(FGFR_gene)
+t_exp = exp_FGFR_comp[order(exp_FGFR_comp, decreasing = T)]
+t_exp = t_exp[match(ovp_samp, substr(names(t_exp),1,6))]
+t2 = cor.test(t_exp, samp_resp_ovp$DT.DC)
+df = data.frame(FGFR_exp = t_exp, dT.dC = samp_resp_ovp$DT.DC, responsive = samp_resp_ovp$DT.DC<0)
+df_ExtFig15f = rbind(df_ExtFig20e, data.frame(df, group = "FGFR composite"))
+p_comp = ggplot(df, aes(x = FGFR_exp, y = dT.dC)) + geom_point() + theme_classic() + 
+  xlab("Composite FGFR expression") + ylab("dT/dC response") + geom_hline(yintercept = 0, size = 0.5, linetype = "dashed") +
+  ggtitle(paste("R = ", round(t2$estimate,3), ",", "P = ", formatC(t2$p.value, digits = 2, format = "e"), sep = ""))
+
+design = "
+    123
+    45#
+"
+
+ExtFig15f = (p_FGFR_cor[[1]] + p_FGFR_cor[[2]] + p_FGFR_cor[[3]]) + p_FGFR_cor[[4]] + p_comp + plot_layout(design = design)
+ExtFig15f 
+```
+
+# Fig4c
+```{r, fig.width = 10, fig.height =8}
+# FGFR1/2/3 amplification : no overlapping samples among FGFR1, 2, and 3
+t_fgfr_amp = rep("none", nrow(samp_resp_ovp))
+t_fgfr_amp[samp_resp_ovp$FGFR1_amp == TRUE] = "FGFR1"
+t_fgfr_amp[samp_resp_ovp$FGFR2_amp == TRUE] = "FGFR2"
+t_fgfr_amp[samp_resp_ovp$FGFR3_amp == TRUE] = "FGFR3"
+
+# loading the combined REs (CrownBio and our analysis)
+FGFR1_RE_comb = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_combined_REs.RData")[["FGFR1_RE_comb"]]
+FGFR2_RE_comb = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_combined_REs.RData")[["FGFR2_RE_comb"]]
+FGFR3_RE_comb = R.utils::loadToEnv("~/FGFR/Daniel/R/Nature_figures/data/Debio/Debio_combined_REs.RData")[["FGFR3_RE_comb"]]
+
+# FGFR rearrangements
+t1 = apply(as.matrix(FGFR1_RE_comb[, c("type", "PROT_FUSION_TYPE", "I17")]), 1, paste, collapse = ":"); names(t1) = FGFR1_RE_comb$sample_id
+t2 = apply(as.matrix(FGFR2_RE_comb[, c("type", "PROT_FUSION_TYPE", "I17")]), 1, paste, collapse = ":"); names(t2) = FGFR2_RE_comb$sample_id
+t3 = apply(as.matrix(FGFR3_RE_comb[, c("type", "PROT_FUSION_TYPE", "I17")]), 1, paste, collapse = ":"); names(t3) = FGFR3_RE_comb$sample_id
+
+df_Fig4c = data.frame(Tumor_type = samp_resp_ovp$Histotype,
+                      FGF3_4_19_amp = samp_resp_ovp$FGF_amp,
+                      FGFR_amp = factor(t_fgfr_amp, levels = c("none", "FGFR1", "FGFR2", "FGFR3")),
+                      FGFR_hotspot_mut = factor(samp_resp_ovp$FGFR_hotspot, levels = c("FGFR2", "FGFR3")),
+                      FGFR1_exp = log2(FGFR_gene[1,match(samp_resp_ovp$Model.name, substr(colnames(FGFR_gene), 1, 6))]+1),
+                      FGFR2_exp = log2(FGFR_gene[2,match(samp_resp_ovp$Model.name, substr(colnames(FGFR_gene), 1, 6))]+1),
+                      FGFR3_exp = log2(FGFR_gene[3,match(samp_resp_ovp$Model.name, substr(colnames(FGFR_gene), 1, 6))]+1),
+                      FGFR4_exp = log2(FGFR_gene[4,match(samp_resp_ovp$Model.name, substr(colnames(FGFR_gene), 1, 6))]+1),
+                      FGFR_composite = exp_FGFR_comp[match(samp_resp_ovp$Model.name, substr(colnames(FGFR_gene), 1, 6))]) %>%
+        mutate(Composite_high = FGFR_composite>=3) %>%
+        mutate(FGFR1_RE = t1[match(samp_resp_ovp$Model.name, names(t1))],
+               FGFR1_RE = ifelse(FGFR1_RE == "downstream:out-of-frame:NA", "5'-partner", FGFR1_RE),
+               FGFR2_RE = t2[match(samp_resp_ovp$Model.name, names(t2))],
+               FGFR2_RE = replace(FGFR2_RE, FGFR2_RE == "upstream:inframe:Yes", "In-frame fusion"),
+               FGFR2_RE = replace(FGFR2_RE, FGFR2_RE == "upstream:out-of-frame:Yes", "Out-of-frame"),
+               FGFR2_RE = replace(FGFR2_RE, FGFR2_RE == "upstream:out-of-frame:NA", "BP outside I17 and 3'-partner"),
+               FGFR3_RE = t3[match(samp_resp_ovp$Model.name, names(t3))],
+               FGFR3_RE = replace(FGFR3_RE, FGFR3_RE == "upstream:inframe:Yes", "In-frame fusion"),
+               FGFR3_RE = replace(FGFR3_RE, FGFR3_RE == "upstream:intergenic:NA", "BP outside I17 and 3'-partner"),
+               FGFR3_RE = replace(FGFR3_RE, FGFR3_RE == "upstream:out-of-frame:NA", "BP outside I17 and 3'-partner"),
+               FGFR3_RE = replace(FGFR3_RE, FGFR3_RE == "downstream:out-of-frame:NA", "5'-partner")) %>%
+        mutate(E18_C3_usage = t_junc_rat[3,],
+               E18_C3_usage = ifelse(is.na(E18_C3_usage), 0, E18_C3_usage),
+               E18_truncation = rep(NA, nrow(.)),
+               E18_truncation = replace(E18_truncation, grepl("frame", FGFR2_RE) | E18_C3_usage>0.05, "FGFR2"),
+               E18_truncation = replace(E18_truncation, grepl("frame", FGFR3_RE), "FGFR3"), 
+               E18_truncation = factor(E18_truncation, levels = c("FGFR2", "FGFR3")),
+               dT_dC = samp_resp_ovp$DT.DC)
+rownames(df_Fig4c) = samp_resp_ovp$Model.name
+
+
+col_RE = c("In-frame fusion" = "#660000", "Out-of-frame" = "#F90708",
+           "BP outside I17 and 3'-partner" = "#66B2FF", "5'-partner" = "blue")
+
+ha = HeatmapAnnotation(df = df_Fig4c,
+                       col = list(Tumor_type = c("ESCA" = "#FF4500", "LUAD/LUSC" = "#B3B3B3", "STAD" = "#7FC97F", 
+                                                "LIHC" = "#660000", "HNSC" = "#E6AB02", "BLCA" = "#000000",
+                                                "PAAD" = "#556b2f", "COAD" = "#FDC086", "BRCA" = "#FF69B4",
+                                                "KIRC" = "#CCCCFF", "CHOL" = "#80B1D3", "GBM" = "#ffff00"), 
+                                  FGF3_4_19_amp = c("TRUE" = "black", "FALSE" = "white"),
+                                  FGFR_amp = c("none" = "white", "FGFR1" = "#E0E0E0", "FGFR2" = "black", "FGFR3" = "#A0A0A0"),
+                                  FGFR_hotspot_mut = c("FGFR2" = "black", "FGFR3" = "#A0A0A0"),
+                                  FGFR1_exp = colorRamp2(c(0, 5, 10), c("white","yellow","red")),
+                                  FGFR2_exp = colorRamp2(c(0, 5, 10), c("white","yellow","red")),
+                                  FGFR3_exp = colorRamp2(c(0, 5, 10), c("white","yellow","red")),
+                                  FGFR4_exp = colorRamp2(c(0, 5, 10), c("white","yellow","red")),
+                                  FGFR_composite = colorRamp2(c(0, 2.5, 5), c("white","yellow","red")),
+                                  Composite_high = c("TRUE" = "black", "FALSE" = "white"),
+                                  FGFR1_RE = col_RE, FGFR2_RE = col_RE, FGFR3_RE = col_RE,
+                                  E18_C3_usage = colorRamp2(c(0, 0.05, 0.1), c("white","yellow","red")),
+                                  E18_truncation = c("FGFR2" = "red", "FGFR3" = "#DB0AFF"),
+                                  dT_dC = colorRamp2(c(-1, 0, 1), c("blue","white","red"))),
+                       annotation_legend_param = list(Tumor_type = list(nrow = 5)), na_col = "white")
+
+index = df_Fig4c %>% mutate(index = 1: nrow(df_Fig4c)) %>% arrange(desc(dT_dC)) %>% pull(index)
+t_mat = matrix(NA, 0, ncol = nrow(df_Fig4c))
+colnames(t_mat) = rownames(df_Fig4c)
+
+ht = Heatmap(matrix = t_mat[,index], top_annotation = ha[index], cluster_rows = F, cluster_columns = F,
+             col = colorRamp2(c(0, 5, 20), c("white","#99CCFF","#004C99")),
+             row_names_gp = gpar(fontsize = 8))
+
+Fig4c = draw(ht, annotation_legend_side = "bottom", merge_legend = F, heatmap_legend_side = "left")
+```
+
+
+# FGF amp, FGFR amp, C_truc FGFR vs FGFRi response
+```{r, fig.width = 10, fig.height= 5}
+library(rstatix)
+
+# FGF amp
+df_ExtFig15de = df_Fig4c %>% select(dT_dC, FGF3_4_19_amp, FGFR_amp)
+
+stat.test = df_ExtFig15de %>% wilcox_test(dT_dC ~ FGF3_4_19_amp) %>% add_significance("p") %>% add_xy_position(x = "FGF3_4_19_amp")
+p_amp_FGF = ggplot(df_ExtFig15de, aes(x = FGF3_4_19_amp, y = dT_dC)) +
+    geom_jitter(aes(color = FGF3_4_19_amp), width = 0.2, size = 2) +
+    geom_boxplot(aes(group = FGF3_4_19_amp), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","black","black","black")) +
+    stat_pvalue_manual(stat.test, label = "p") + theme_classic() +
+    geom_hline(yintercept = 0, size = 0.5, linetype = "dashed", color = "black") +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(-3, 2)) +
+    xlab("Amplification") + ylab("dT/dC response")
+
+# FGFR amp
+stat.test = df_ExtFig15de %>% tukey_hsd(dT_dC ~ FGFR_amp) %>% add_significance("p.adj") %>% add_xy_position(x = "FGFR_amp")
+p_amp_FGFR = ggplot(df_ExtFig15de, aes(x = FGFR_amp, y = dT_dC)) +
+    geom_jitter(aes(color = FGFR_amp), width = 0.2, size = 2) +
+    geom_boxplot(aes(group = FGFR_amp), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("gray","black","black","black")) +
+    stat_pvalue_manual(stat.test[1:3,], label = "p.adj") + theme_classic() +
+    geom_hline(yintercept = 0, size = 0.5, linetype = "dashed", color = "black") +
+    theme(legend.position = "none") + coord_cartesian(ylim = c(-3, 2)) +
+    xlab("Amplification") + ylab("dT/dC response")
+
+# C_trunc
+df_ExtFig15g = df_Fig4c %>% 
+    mutate(E18_truncation_all = factor(ifelse(!is.na(E18_truncation), "FGFR", "None"), levels = c("None", "FGFR"))) %>% 
+    select(dT_dC, E18_truncation_all, E18_truncation)
+stat.test = df_ExtFig15g %>% wilcox_test(dT_dC ~ E18_truncation_all) %>% add_significance("p") %>% add_xy_position(x = "E18_truncation_all")
+p_trunc = ggplot(df_ExtFig15g, aes(x = E18_truncation_all, y = dT_dC)) +
+    geom_jitter(aes(color = E18_truncation), width = 0.2, size = 2) +
+    geom_boxplot(aes(group = E18_truncation_all), outlier.shape = NA, alpha = 0) +
+    scale_color_manual(values = c("None" = "gray", "FGFR2" = "red", "FGFR3" = "#DB0AFF")) +
+    coord_cartesian(ylim = c(-3, 2)) + 
+    stat_pvalue_manual(stat.test, label = "p") + theme_classic() +
+    geom_hline(yintercept = 0, size = 0.5, linetype = "dashed", color = "black") +
+    theme(legend.position = "none") + xlab("E18-truncation") + ylab("dT/dC response")
+
+ExtFig15deg = p_amp_FGF + p_amp_FGFR + p_trunc + plot_layout(widths = c(1, 2, 1))
+ExtFig15deg
+```
+
+# source data
+```{r}
+xlsx::write.xlsx2(df_Fig4c, "~/FGFR/Daniel/R/Nature_figures/sources/Debio_Fig4.xlsx", sheetName = "Fig4c", row.names = T)
+xlsx::write.xlsx2(df_ExtFig15de, "~/FGFR/Daniel/R/Nature_figures/sources/Debio_ExtFig15.xlsx", sheetName = "Ext_Fig15de", row.names = F)
+xlsx::write.xlsx2(df_ExtFig15f, "~/FGFR/Daniel/R/Nature_figures/sources/Debio_ExtFig15.xlsx", sheetName = "Ext_Fig15f", row.names = F, append = T)
+xlsx::write.xlsx2(df_ExtFig15g %>% select(-E18_truncation_all), "~/FGFR/Daniel/R/Nature_figures/sources/Debio_ExtFig15.xlsx", sheetName = "Ext_Fig15g", row.names = F, append = T)
+```
+
+

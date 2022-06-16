@@ -1,0 +1,658 @@
+---
+title: "FM Fig2 & Fig3 & Ext_Fig10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+# Libraries
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+```
+
+# FM data loading
+```{r}
+# data loading
+load("~/FGFR/Daniel/R/Nature_figures/data/FM/FM_FGFR2_coalterations.RData")
+
+# data frame
+FMI_tumors = FMI_tumors[, c(1,2,4,3,5,7:9)] %>%
+    mutate(TCGA_type = factor(TCGA_type, levels = names(sort(table(TCGA_type), decreasing = T)))) %>%
+    mutate(FGFR2_mut_trunc = replace(FGFR2_mut_trunc, FGFR2_mut_trunc == "E18-trunc-onco", "Proximal C-term, E768-Y783"),
+           FGFR2_mut_trunc = replace(FGFR2_mut_trunc, FGFR2_mut_trunc == "E18-trunc-others", "Distal C-term, P784-T821"),
+           FGFR2_mut_trunc = replace(FGFR2_mut_trunc, FGFR2_mut_trunc == "E18-splice", "E18 splice-site"),
+           FGFR2_mut_trunc = replace(FGFR2_mut_trunc, FGFR2_mut_trunc == "E18-trunc-onco;E18-splice", "E18 splice-site + truncating"),
+           FGFR2_mut_trunc = factor(FGFR2_mut_trunc, 
+                                    levels = c("Proximal C-term, E768-Y783", "Distal C-term, P784-T821",
+                                               "E18 splice-site", "E18 splice-site + truncating"))) %>%
+    mutate(FGFR2_amp = replace(FGFR2_amp, FGFR2_amp == "Full amplification", "E1-E18"),
+           FGFR2_amp = replace(FGFR2_amp, FGFR2_amp == "E1-17 amplification", "E1-E17"),
+           FGFR2_amp = factor(FGFR2_amp, levels = c("E1-E18", "E1-E17"))) %>%
+    mutate(RE_FGFR2 = replace(RE_FGFR2, RE_FGFR2 == "in-frame", "In-frame fusion"),
+           RE_FGFR2 = replace(RE_FGFR2, RE_FGFR2 == "in-strand (frame-unknown)", "Frame unknown"),
+           RE_FGFR2 = replace(RE_FGFR2, RE_FGFR2 == "intergenic RE", "Intergenic space"),
+           RE_FGFR2 = replace(RE_FGFR2, RE_FGFR2 == "out-of-strand RE", "Out-of-strand"),
+           RE_FGFR2 = replace(RE_FGFR2, RE_FGFR2 == "re_internal", "Internal"),
+           RE_FGFR2 = factor(RE_FGFR2, levels = c("In-frame fusion", "Frame unknown", "Intergenic space", "Out-of-strand", "Internal"))) %>%
+    mutate(FGFR2_chr_SV = replace(FGFR2_chr_SV, FGFR2_chr_SV == "Interchromosomal", "Other"),
+           FGFR2_chr_SV = replace(FGFR2_chr_SV, FGFR2_chr_SV == "Intrachromosomal", "Chr-10"),
+           FGFR2_chr_SV = factor(FGFR2_chr_SV, levels = c("Other", "Chr-10"))) %>%
+    mutate(FGFR2_E18_trunc = ifelse(grepl("Proximal|splice", as.character(FGFR2_mut_trunc)) |
+                                    as.character(FGFR2_amp) == "E1-E17" |
+                                    !is.na(as.character(RE_FGFR2)), "Yes", NA))
+```
+
+
+
+# Heatmap annotation
+```{r}
+# "col" should be defined first before using oncoprint (included in alter_fun))
+col = c("amplification" = "red", "deletion" = "blue", "truncation" = "#660099", "splice_nonfs" = "black",
+        "missense" = "#008000", "promoter" = "#676700")
+
+alter_fun = list(
+  background = function(x, y, w, h) {
+        grid.rect(x, y, w-unit(0.5, "mm"), h-unit(0.5, "mm"), 
+            gp = gpar(fill = "white", col = NA))
+  },
+  # amplification
+  amplification = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h-unit(0.5, "mm"), 
+              gp = gpar(fill = col["amplification"], col = NA))
+  },
+  # deletion
+  deletion = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h-unit(0.5, "mm"),
+              gp = gpar(fill = col["deletion"], col = NA))
+  },
+  # promoter
+  promoter = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h*0.33, 
+              gp = gpar(fill = col["promoter"], col = NA))
+  },
+  # truncation
+  truncation = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h*0.33, 
+              gp = gpar(fill = col["truncation"], col = NA))
+  },
+  # missense
+  missense = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h*0.33, 
+              gp = gpar(fill = col["missense"], col = NA))
+  },
+  # splice & nonframeshift
+  splice_nonfs = function(x, y, w, h) {
+    grid.rect(x, y, w-unit(0.5, "mm"), h*0.33, 
+              gp = gpar(fill = col["splice_nonfs"], col = NA))
+  }
+)
+
+col_TCGA = c("CHOL_Intrahepatic" = "#377EB8", "BRCA" = "#FF69B4", "Unknown primary" = "#606060", "STAD" = "#7FC97F", "ESCA" = "#ff4500", 
+             "OV" = "#F4CAE4", "CHOL_Bile duct/Gallbladder" = "#80B1D3", "LUAD" = "#B3B3B3", "COAD" = "#FDC086", "PAAD" = "#556b2f",
+             "UCEC" = "#632f6b", "BLCA" = "#000000", "SARC" = "#20b2aa", "LUSC" = "#b26120", "PRAD" = "#b3b300", "HNSC" = "#E6AB02",
+             "UCS" = "#990000", "CESC" = "#00ff00", "LGG" = "#FFFFCC", "READ" = "#0000ff", "SGC" = "#000080",
+             "Other" = "#2f4f4f")
+
+ha = HeatmapAnnotation(df = FMI_tumors %>% select(-Order), 
+                       col = list(TCGA_type = col_TCGA,
+                                  FGFR2_mut_hot = c("TRUE" = "black"),
+                                  FGFR2_amp = c("E1-E18" = "blue", "E1-E17" = "#FFC300"),
+                                  FGFR2_mut_trunc = c("Proximal C-term, E768-Y783" = "#0C5D08",
+                                                      "Distal C-term, P784-T821" = "#00a2a0",
+                                                      "E18 splice-site" = "#9BFF9D",
+                                                      "E18 splice-site + truncating" = "steelblue"), 
+                                  RE_FGFR2 = c("In-frame fusion" = "#660000", "Frame unknown" = "#F90708", 
+                                               "Intergenic space" = "#FF66FF", "Out-of-strand" = "#FFD700", "Internal" = "#989CFD"),
+                                  FGFR2_brkpt = c("I17" = "#911eb4", "E18" = "#BFEF45"),
+                                  FGFR2_chr_SV = c("Chr-10" = "#469990", "Other" = "#e6beff"),
+                                  FGFR2_E18_trunc = c("Yes" = "red")), 
+                       na_col = "white", show_legend = T,
+                       annotation_legend_param = list(TCGA_type = list(nrow = 7)))
+```
+
+# Fig 2a
+Oncoplot for FGFR2 variants  
+```{r, fig.width = 10, fig.height = 6}
+# ordering based on mut --> amp --> RE
+df_sort = FMI_tumors %>% 
+    arrange(RE_FGFR2, FGFR2_brkpt, FGFR2_chr_SV, FGFR2_amp, FGFR2_mut_trunc, FGFR2_mut_hot)
+
+# sorting by REs
+df_1 = df_sort[which(df_sort$RE_FGFR2 == "In-frame fusion"),]
+df_1 = df_1 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_1$TCGA_type), decreasing = T))))
+df_2 = df_sort[which(df_sort$RE_FGFR2 == "Frame unknown"),]
+df_2 = df_2 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_2$TCGA_type), decreasing = T))))
+df_3 = df_sort[which(df_sort$RE_FGFR2 == "Intergenic space"),]
+df_3 = df_3 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_3$TCGA_type), decreasing = T))))
+df_4 = df_sort[which(df_sort$RE_FGFR2 == "Out-of-strand"),]
+df_4 = df_4 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_4$TCGA_type), decreasing = T))))
+df_5 = df_sort[which(df_sort$RE_FGFR2 == "Internal"),]
+df_5 = df_5 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_5$TCGA_type), decreasing = T))))
+
+df_RE = c(df_1$Order, df_2$Order, df_3$Order, df_4$Order, df_5$Order)
+
+# sorting by partial amplification
+df_1 = df_sort[which(df_sort$FGFR2_amp == "E1-E17" & !(df_sort$Order %in% df_RE)),]
+df_1 = df_1 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_1$TCGA_type), decreasing = T))))
+df_Amp_partial = df_1$Order
+
+# sorting by truncating mutations
+df_1 = df_sort[which(df_sort$FGFR2_mut_trunc == "Proximal C-term, E768-Y783" & !(df_sort$Order %in% c(df_RE, df_Amp_partial))),]
+df_1 = df_1 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_1$TCGA_type), decreasing = T))))
+
+df_2 = df_sort[which(df_sort$FGFR2_mut_trunc ==  "E18 splice-site" & !(df_sort$Order %in% c(df_RE, df_Amp_partial))),]
+df_2 = df_2 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_2$TCGA_type), decreasing = T))))
+
+df_3 = df_sort[which(df_sort$FGFR2_mut_trunc == "E18 splice-site + truncating" & !(df_sort$Order %in% c(df_RE, df_Amp_partial))),]
+df_3 = df_3 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_3$TCGA_type), decreasing = T))))
+
+df_4 = df_sort[which(df_sort$FGFR2_mut_trunc == "Distal C-term, P784-T821" & !(df_sort$Order %in% c(df_RE, df_Amp_partial))),]
+df_4 = df_4 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_4$TCGA_type), decreasing = T))))
+
+df_Mut_trunc = c(df_1$Order, df_2$Order, df_3$Order, df_4$Order)
+
+# sorting by full amplification
+df_1 = df_sort[which(df_sort$FGFR2_amp == "E1-E18" & !(df_sort$Order %in% c(df_RE, df_Amp_partial, df_Mut_trunc))),]
+df_1 = df_1 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_1$TCGA_type), decreasing = T))))
+df_Amp_full = df_1$Order
+
+# sorting by hotspot mutations 
+df_1 = df_sort[which(df_sort$FGFR2_mut_hot == TRUE & !(df_sort$Order %in% c(df_RE, df_Amp_partial, df_Mut_trunc, df_Amp_full))),]
+df_1 = df_1 %>% arrange(factor(TCGA_type, levels = names(sort(table(df_1$TCGA_type), decreasing = T))))
+df_Mut_hot = df_1$Order
+
+ind_ord = c(df_RE, df_Amp_partial, df_Mut_trunc, df_Amp_full, df_Mut_hot)
+
+hm_FGFR2 = Heatmap(matrix(NA, 0, length(ind_ord)), top_annotation = ha[ind_ord], column_title = paste("n = ", length(ind_ord), sep=""))
+
+Fig2a = draw(hm_FGFR2, annotation_legend_side = "bottom", merge_legend = F)
+
+# source file
+df_Fig2a = FMI_tumors[ind_ord,] %>% select(-Order)
+```
+
+# Ext Fig 10a
+Pancancer oncoplot for co-occurance 
+```{r, fig.width = 10, fig.height = 8}
+ind = FMI_tumors %>% filter(as.character(FGFR2_mut_trunc) == "Distal C-term, P784-T821") %>% pull(Order) 
+FMI_tumors_filt = FMI_tumors[-ind,] %>% mutate(Order = 1:nrow(.))
+ha_coocur = HeatmapAnnotation(df =FMI_tumors_filt %>% select(-FGFR2_brkpt, -FGFR2_chr_SV, -Order),
+                       col = list(TCGA_type = col_TCGA,
+                                  FGFR2_mut_hot = c("TRUE" = "black"),
+                                  FGFR2_amp = c("E1-E18" = "blue", "E1-E17" = "#FFC300"),
+                                  FGFR2_mut_trunc = c("Proximal C-term, E768-Y783" = "#0C5D08",
+                                                      "Distal C-term, P784-T821" = "#00a2a0",
+                                                      "E18 splice-site" = "#9BFF9D",
+                                                      "E18 splice-site + truncating" = "steelblue"), 
+                                  RE_FGFR2 = c("In-frame fusion" = "#660000", "Frame unknown" = "#F90708", 
+                                               "Intergenic space" = "#FF66FF", "Out-of-strand" = "#FFD700", "Internal" = "#989CFD"),
+                                  FGFR2_E18_trunc = c("Yes" = "red")), 
+                       na_col = "white", show_legend = T,
+                       annotation_legend_param = list(TCGA_type = list(nrow = 7)))
+
+t_mut = mut_sum_mat_all[match(rownames(FMI_tumors_filt), rownames(mut_sum_mat_all)),
+                        order(colSums(!is.na(mut_sum_mat_all)), decreasing=T)]
+sort_mut = function(mut_mat){
+    mut_mat_bin = !is.na(mut_mat)
+    for(i in 1:ncol(mut_mat_bin)){
+        ind = order(mut_mat_bin[, ncol(mut_mat_bin)-i+1], decreasing = T)
+        mut_mat_bin = mut_mat_bin[ind,]
+    }
+    return(mut_mat_bin)
+}
+t_mut_sort = sort_mut(t_mut)
+
+df_sort = FMI_tumors_filt[match(rownames(t_mut_sort), rownames(FMI_tumors_filt)),]
+
+ind_trunc = df_sort %>% filter(FGFR2_E18_trunc == "Yes") %>% 
+    arrange(factor(TCGA_type, levels = names(sort(table(TCGA_type), decreasing = T))), RE_FGFR2) %>% pull(Order)
+ind_amp = df_sort %>% filter(FGFR2_amp == "E1-E18") %>% 
+    arrange(factor(TCGA_type, levels = names(sort(table(TCGA_type), decreasing = T))), RE_FGFR2) %>% pull(Order)
+ind_amp = setdiff(ind_amp, ind_trunc)
+ind_mut = df_sort %>% filter(FGFR2_mut_hot == TRUE) %>% 
+    arrange(factor(TCGA_type, levels = names(sort(table(TCGA_type), decreasing = T))), RE_FGFR2) %>% pull(Order)
+ind_mut = setdiff(ind_mut, c(ind_trunc, ind_amp))
+
+# sorting by co-occuring mutations
+t_mut_trunc = sort_mut(t_mut[ind_trunc,])
+t_mut_amp = sort_mut(t_mut[ind_amp,])
+t_mut_mut = sort_mut(t_mut[ind_mut,])
+
+ind_ord_2 = FMI_tumors_filt$Order[match(rownames(rbind(t_mut_trunc, t_mut_amp, t_mut_mut)), rownames(FMI_tumors_filt))]
+
+# Sorting the genes based on frequency
+gene_order_pan = c("TP53", "PIK3CA", "PTEN", "ARID1A", "CDKN2A", "MYC", "CDKN2B", "BAP1", "PIK3R1", "MLL2", "CCND1", "KRAS", "FGF19", "FGF3",
+                "CTCF", "FGF4", "RB1", "APC", "CTNNB1", "NF1", "CCNE1", "MCL1", "ERBB2", "ATM", "PBRM1", "CDH1", "ESR1", "FBXW7", "BCOR", "RNF43")
+hm_2 = oncoPrint(t(t_mut[ind_ord_2, match(gene_order_pan, colnames(t_mut))]), alter_fun = alter_fun, col = col, top_annotation = ha_coocur[ind_ord_2], 
+          right_annotation = rowAnnotation(Frequency = anno_oncoprint_barplot(border = T, axis_param = list(side = "bottom", labels_rot = 0))),
+          column_order = 1:nrow(t_mut), use_raster = F,
+          row_order = 1:ncol(t_mut),
+          column_title = paste("n = ", length(ind_ord_2), sep = ""))
+#pdf("~/FGFR/Daniel/R/Nature_figures/sources/FM_cooccurence.pdf", width = 16, height = 10)          
+Ext_Fig10a = draw(hm_2, annotation_legend_side = "bottom", merge_legend = F)
+
+# source file
+df_Ext_Fig10a = FMI_tumors_filt[ind_ord_2,] %>% select(-Order, -FGFR2_brkpt, -FGFR2_chr_SV)
+colnames(df_Ext_Fig10a) = c("Tumor type", "FGFR2 hotspot mut", "FGFR2 amp", "FGFR2 E18-truncating mut", "FGFR2 RE type", "FGFR2 E18-truncation")
+df_Ext_Fig10a = cbind(df_Ext_Fig10a, t_mut[ind_ord_2,])
+```
+
+# Ext Fig 10b
+Proportions of co-occurance in pan-cancer  
+```{r, fig.width=7, fig.height=8}
+# proportional test between the groups
+prop_test = function(mut_binary, ind_trunc, ind_amp, ind_hotspot){
+    t_mat = matrix(0, nrow(mut_binary), 3)
+    t_mat[ind_trunc, 1] = 1
+    t_mat[ind_amp, 2] = 1
+    t_mat[ind_hotspot, 3] = 1
+
+    prop_pval = matrix(NA, ncol(mut_binary), 3)
+    prop_fdr = matrix(NA, ncol(mut_binary), 3)
+    prop_ratio = matrix(NA, ncol(mut_binary), 6)
+    prop_cnt = matrix(NA, ncol(mut_binary), 12)
+    for(i in 1:ncol(mut_binary)){
+      # col1 : samples with FGFR2 truncation, col2: full amplifications, col3: hotspot mutations, col4: target gene alterations
+      t_mat_comb = cbind(t_mat, target = mut_binary[, i])
+      
+      # Trunc vs others
+      t_x = rowSums(t_mat_comb[, c(2:3)]); t_x[t_x==2] = 1 # samples with full amplications and hotspot mutations (1 / 0)
+      x1 = c(sum(rowSums(t_mat_comb[,c(1,4)]) == 2), sum(rowSums(cbind(t_x, t_mat_comb[,4]))==2)) # co-altering with target gene alterations (with truncs and others)
+      n1 = c(sum(t_mat_comb[,1]), sum(t_x)) # number of trunc-samples and others (full amp / hotspot) 
+      t_stat_trunc = prop.test(x1, n1, correct = T, alternative = "greater")
+      # Amp vs others
+      t_x = rowSums(t_mat_comb[, c(1,3)]); t_x[t_x==2] = 1
+      x2 = c(sum(rowSums(t_mat_comb[,c(2,4)]) == 2), sum(rowSums(cbind(t_x, t_mat_comb[,4]))==2))
+      n2 = c(sum(t_mat_comb[,2]), sum(t_x))
+      t_stat_amp = prop.test(x2, n2, correct = T, alternative = "greater")
+      # Mut vs others
+      t_x = rowSums(t_mat_comb[, c(1,2)]); t_x[t_x==2] = 1
+      x3 = c(sum(rowSums(t_mat_comb[,c(3,4)]) == 2), sum(rowSums(cbind(t_x, t_mat_comb[,4]))==2))
+      n3 = c(sum(t_mat_comb[,3]), sum(t_x))
+      t_stat_mut = prop.test(x3, n3, correct = T, alternative = "greater")
+      
+      prop_pval[i,] = c(t_stat_trunc$p.value, t_stat_amp$p.value, t_stat_mut$p.value)
+      # x1: number of samples with both FGFR2 trunc and target alterations
+      # n1-x1: number of samples with only FGFR2 trunc not target alterations
+      prop_cnt[i,] = c(x1, n1-x1, x2, n2-x2, x3, n3-x3)
+      # col1: portion of co-alterations among the trunc samples, col2: portion of samples without target alterations among the trunc samples 
+      prop_ratio[i,] = c(t_stat_trunc$estimate, t_stat_amp$estimate, t_stat_mut$estimate)
+    }
+
+    prop_fdr[,1] = p.adjust(prop_pval[,1], "BH")
+    prop_fdr[,2] = p.adjust(prop_pval[,2], "BH")
+    prop_fdr[,3] = p.adjust(prop_pval[,3], "BH")
+
+    rownames(prop_pval) = colnames(mut_binary)
+    colnames(prop_pval) = c("Trunc", "Amp", "Mut")
+
+    rownames(prop_fdr) = colnames(mut_binary)
+    colnames(prop_fdr) = c("Trunc", "Amp", "Mut")
+
+    rownames(prop_ratio) = colnames(mut_binary)
+    colnames(prop_ratio) = c("Trunc.Prop.with.target", "Trunc.Prop.without.target", 
+                             "Amp.Prop.with.target", "Amp.Prop.without.target", 
+                             "Mut.Prop.with.target", "Mut.Prop.without.target")
+    rownames(prop_cnt) = colnames(mut_binary)
+    colnames(prop_cnt) = c("Trunc.x1", "Trunc.x2", "Trunc.n1_x1", "Trunc.n2_x2",
+                               "Amp.x1", "Amp.x2", "Amp.n1_x1", "Amp.n2_x2",
+                               "Mut.x1", "Mut.x2", "Mut.n1_x1", "Mut.n2_x2")
+    prop_test_outcome = list(prop_pval, prop_fdr, prop_ratio, prop_cnt)
+    names(prop_test_outcome) = c("pval", "fdr", "ratio", "cnt")
+    return(prop_test_outcome)
+}
+
+mut_binary_mat_filt = mut_binary_mat_all[match(rownames(FMI_tumors_filt), rownames(mut_binary_mat_all)),
+                                         match(colnames(t_mut), colnames(mut_binary_mat_all))]
+
+ind_trunc = FMI_tumors_filt %>% mutate(Order2 = 1:nrow(.)) %>%
+    filter(!is.na(RE_FGFR2) | FGFR2_amp == "E1-E17" | grepl("Proximal|splice", FGFR2_mut_trunc)) %>% pull(Order2)
+ind_amp = FMI_tumors_filt %>% mutate(Order2 = 1:nrow(.)) %>%
+    filter(FGFR2_amp == "E1-E18") %>% pull(Order2)
+ind_hotspot = FMI_tumors_filt %>% mutate(Order2 = 1:nrow(.)) %>%
+    filter(FGFR2_mut_hot == T) %>% pull(Order2)
+prop_pan = prop_test(mut_binary_mat_filt, ind_trunc, ind_amp, ind_hotspot)
+
+ind_gene = match(gene_order_pan, rownames(prop_pan$ratio))
+df_Ext_Fig10b = rbind(data.frame(gene = rownames(prop_pan$ratio)[ind_gene], frequency = prop_pan$ratio[ind_gene,1], group = "E18-truncation", FDR = prop_pan$fdr[ind_gene,1]),
+                      data.frame(gene = rownames(prop_pan$ratio)[ind_gene], frequency = prop_pan$ratio[ind_gene,3], group = "E1-E18 amp", FDR = prop_pan$fdr[ind_gene,2]),
+                      data.frame(gene = rownames(prop_pan$ratio)[ind_gene], frequency = prop_pan$ratio[ind_gene,5], group = "Missense hotspot mut", FDR = prop_pan$fdr[ind_gene,3])) %>%
+    mutate(gene = factor(gene, levels = rev(gene_order_pan)),
+           group = factor(group, levels = c("Missense hotspot mut","E1-E18 amp","E18-truncation")))
+
+Ext_Fig10b = ggplot(df_Ext_Fig10b, aes(x = gene, y = frequency, fill = group)) + geom_bar(stat = "identity", position = position_dodge()) +
+    scale_fill_manual(values = c("black","blue","red"), guide = guide_legend(reverse = T)) +
+    theme_classic() + coord_flip()
+Ext_Fig10b
+```
+
+# Fig 3a
+BRCA oncoplot for co-occurance  
+```{r, fig.width = 10, fig.height = 8}
+t_df = FMI_tumors_filt[ind_ord_2,] %>% filter(TCGA_type == "BRCA")
+ind_BRCA = match(rownames(t_df), rownames(mut_sum_mat_BRCA))  
+ind_ha = t_df$Order
+mut_sum_mat_BRCA_top = mut_sum_mat_BRCA[ind_BRCA, 1:14]
+gene_order_brca = c("TP53", "PIK3CA", "MYC", "PTEN", "CCND1", "FGF19", "FGF3", "FGF4", "ESR1", "FGFR1", "ZNF703", "CDH1", "ERBB2", "MYST3")
+
+hm_BRCA = oncoPrint(t(mut_sum_mat_BRCA_top[, match(gene_order_brca, colnames(mut_sum_mat_BRCA_top))]), alter_fun = alter_fun, col = col, top_annotation = ha_coocur[ind_ha], 
+          right_annotation = rowAnnotation(Frequency = anno_oncoprint_barplot(border = T, axis_param = list(side = "bottom", labels_rot = 0))),
+          column_order = 1:length(ind_BRCA), 
+          row_order = 1:length(gene_order_brca), use_raster = F,
+          column_title = paste("n = ", length(ind_BRCA), sep = ""))
+
+Fig3a = draw(hm_BRCA, annotation_legend_side = "bottom", merge_legend = F)
+
+# source file
+df_Fig3a = FMI_tumors_filt[ind_ord_2,] %>% filter(TCGA_type == "BRCA") %>% select(-Order, -FGFR2_brkpt, -FGFR2_chr_SV)
+colnames(df_Fig3a) = c("Tumor type", "FGFR2 hotspot mut", "FGFR2 amp", "FGFR2 E18-truncating mut", "FGFR2 RE type", "FGFR2 E18-truncation") 
+df_Fig3a = cbind(df_Fig3a, data.frame(mut_sum_mat_BRCA[ind_BRCA, 1:14])) 
+```
+
+# Fig 3b
+Proportion of co-occurance in breast cancer
+```{r, fig.width = 7, fig.height = 8}
+# proportional test between the groups
+FMI_tumors_filt_BRCA = FMI_tumors_filt %>% filter(TCGA_type == "BRCA")
+t_mut_BRCA = mut_sum_mat_BRCA[match(rownames(FMI_tumors_filt_BRCA), rownames(mut_sum_mat_BRCA)),]
+t_mut_BRCA = t_mut_BRCA[, match(names(sort(colSums(!is.na(t_mut_BRCA)), decreasing = T)), colnames(t_mut_BRCA))]
+mut_binary_mat_filt_BRCA = !is.na(t_mut_BRCA) * 1 
+
+ind_trunc_brca = FMI_tumors_filt %>% filter(TCGA_type == "BRCA") %>% mutate(Order2 = 1:nrow(.)) %>% 
+    filter(!is.na(RE_FGFR2) | FGFR2_amp == "E1-E17" | grepl("Proximal|splice", FGFR2_mut_trunc)) %>% pull(Order2)
+ind_amp_brca = FMI_tumors_filt %>% filter(TCGA_type == "BRCA") %>% mutate(Order2 = 1:nrow(.)) %>% 
+    filter(FGFR2_amp == "E1-E18") %>% pull(Order2)
+ind_hotspot_brca = FMI_tumors_filt %>% filter(TCGA_type == "BRCA") %>% mutate(Order2 = 1:nrow(.)) %>% 
+    filter(FGFR2_mut_hot == T) %>% pull(Order2)
+prop_brca = prop_test(mut_binary_mat_filt_BRCA, ind_trunc_brca, ind_amp_brca, ind_hotspot_brca)
+
+# top 14 genes
+ind_gene = match(gene_order_brca, rownames(prop_brca$ratio))
+df_Fig3b = rbind(data.frame(gene = rownames(prop_brca$ratio)[ind_gene], frequency = prop_brca$ratio[ind_gene,1], group = "E18-truncation", FDR = prop_brca$fdr[ind_gene,1]),
+                 data.frame(gene = rownames(prop_brca$ratio)[ind_gene], frequency = prop_brca$ratio[ind_gene,3], group = "E1-E18 amp", FDR = prop_brca$fdr[ind_gene,2]),
+                 data.frame(gene = rownames(prop_brca$ratio)[ind_gene], frequency = prop_brca$ratio[ind_gene,5], group = "Missense hotspot mut", FDR = prop_brca$fdr[ind_gene,3])) %>%
+    mutate(gene = factor(gene, levels = rev(gene_order_brca)),
+           group = factor(group, levels = c("Missense hotspot mut","E1-E18 amp","E18-truncation")))
+
+Fig3b = ggplot(df_Fig3b, aes(x = gene, y = frequency, fill = group)) + geom_bar(stat = "identity", position = position_dodge()) +
+    scale_fill_manual(values = c("black","blue","red"), guide = guide_legend(reverse = T)) +
+    theme_classic() + coord_flip()
+Fig3b
+```
+
+# Ext Fig 10e
+Proportion of co-occurance in several cancer types  
+```{r, fig.width = 8, fig.height = 8}
+# proportional test between the groups for sevral tumor types
+tumors_interest = list(CHOL = c("CHOL_Bile duct/Gallbladder", "CHOL_Intrahepatic"),
+                       OV = c("OV"),
+                       COAD_READ = c("COAD", "READ"),
+                       ESCA_STAD = c("ESCA", "STAD"),
+                       LUAD_LUSC = c("LUAD", "LUSC"))
+
+coalt_genes = function(tumor_type){
+    ord_samp = FMI_tumors_filt[match(rownames(rbind(t_mut_trunc, t_mut_amp, t_mut_mut)), 
+                                rownames(FMI_tumors_filt)),] %>%
+        filter(TCGA_type %in% tumor_type) %>% pull(Order)
+    t_mut_target = t_mut[ord_samp,]
+    ord_gene = order(colSums(!is.na(t_mut_target)), decreasing = T)
+
+    # prop.test
+    ind_trunc = FMI_tumors_filt %>%
+        filter(!is.na(RE_FGFR2) | FGFR2_amp == "E1-E17" | grepl("Proximal|splice", FGFR2_mut_trunc), TCGA_type %in% tumor_type) %>% 
+        pull(Order)
+    ind_amp = FMI_tumors_filt %>%
+        filter(FGFR2_amp == "E1-E18", TCGA_type %in% tumor_type) %>% 
+        pull(Order)
+    ind_hotspot = FMI_tumors_filt %>%
+        filter(FGFR2_mut_hot == T, TCGA_type %in% tumor_type) %>% 
+        pull(Order)
+    prop_target = prop_test(mut_binary_mat_filt[, match(colnames(t_mut_target)[ord_gene], colnames(mut_binary_mat_filt))], 
+                            ind_trunc, ind_amp, ind_hotspot)
+
+    tab_prop = data.frame(prop_target$ratio[, c("Trunc.Prop.with.target", "Amp.Prop.with.target", "Mut.Prop.with.target")],
+                          FDR = prop_target$fdr)
+
+    return(tab_prop)
+}
+
+other_tumors_coalt = vector("list", length(tumors_interest))
+genes_order = c("TP53", "PIK3CA", "APC", "MYC", "ARID1A", "KRAS", "PTEN", "CCNE1", "BAP1", "CCND1",
+                "ERBB2", "FGF3", "FGF4", "FGF19")
+df_Ext_Fig10e = c()
+for(i in 1:length(tumors_interest)){
+    t_coalt = coalt_genes(tumors_interest[[i]])
+    other_tumors_coalt[[i]] = t_coalt[match(genes_order, rownames(t_coalt)),]
+    df_Ext_Fig10e = rbind(df_Ext_Fig10e, 
+                          data.frame(gene = rownames(other_tumors_coalt[[i]]),
+                                     frequency = other_tumors_coalt[[i]][,1],
+                                     group = "E18-truncation",
+                                     FDR = other_tumors_coalt[[i]][,4],
+                                     tumor_type = names(tumors_interest)[i]),
+                          data.frame(gene = rownames(other_tumors_coalt[[i]]),
+                                     frequency = other_tumors_coalt[[i]][,2],
+                                     group = "E1-E18 amp",
+                                     FDR = other_tumors_coalt[[i]][,5],
+                                     tumor_type = names(tumors_interest)[i]),
+                          data.frame(gene = rownames(other_tumors_coalt[[i]]),
+                                     frequency = other_tumors_coalt[[i]][,3],
+                                     group = "Missense hotspot mut",
+                                     FDR = other_tumors_coalt[[i]][,6],
+                                     tumor_type = names(tumors_interest)[i]))
+
+}
+df_Ext_Fig10e = df_Ext_Fig10e %>%
+    mutate(gene = factor(gene, levels = rev(genes_order)),
+           group = factor(group, levels = c("Missense hotspot mut","E1-E18 amp","E18-truncation")),
+           tumor_type = factor(tumor_type, levels = names(tumors_interest)))
+
+Ext_Fig10e = ggplot(df_Ext_Fig10e, aes(x = gene, y = frequency, fill = group)) + geom_bar(stat = "identity", position = position_dodge()) +
+    scale_fill_manual(values = c("Missense hotspot mut" = "black", "E1-E18 amp" = "blue", "E18-truncation" = "red"), 
+                      guide = guide_legend(reverse = T)) +
+    theme_classic() + coord_flip() + 
+    facet_wrap(.~tumor_type)
+
+Ext_Fig10e
+```
+
+# Fig 3c
+Odd ratios of co-occurance in FGFR2 alt group vs FGFR2 WT group in breast cancer 
+```{r, fig.width = 10, fig.height = 6}
+brca_coalt = list()
+brca_coalt$E18_trunc = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 4, header = T)
+brca_coalt$Full_amp = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 5, header = T)
+brca_coalt$hotspot = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 6, header = T)
+
+pancancer_coalt = list()
+pancancer_coalt$E18_trunc = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 1, header = T)
+pancancer_coalt$Full_amp = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 2, header = T)
+pancancer_coalt$hotspot = xlsx::read.xlsx2("~/FGFR/Daniel/R/Nature_figures/data/FM/FGFR2 trunc codriver analysis.xlsx", sheetIndex = 3, header = T)
+
+fisher_trunc_brca = c()
+fisher_amp_brca = c()
+fisher_hotspot_brca = c()
+for(i in 1:nrow(brca_coalt$Full_amp)){
+    # Full amp
+    a = as.numeric(brca_coalt$Full_amp$FGFR2.amp.count[i]) # both
+    b = as.numeric(brca_coalt$Full_amp$FGFR2.amp.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(brca_coalt$Full_amp$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(brca_coalt$Full_amp$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_amp = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    # E18 trunc
+    a = as.numeric(brca_coalt$E18_trunc$FGFR2.E18.trunc.count[i]) # both
+    b = as.numeric(brca_coalt$E18_trunc$FGFR2.E18.trunc.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(brca_coalt$E18_trunc$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(brca_coalt$E18_trunc$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_trunc = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    # hotspot
+    a = as.numeric(brca_coalt$hotspot$FGFR2.hotspot.count[i]) # both
+    b = as.numeric(brca_coalt$hotspot$FGFR2.hotspot.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(brca_coalt$hotspot$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(brca_coalt$hotspot$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_hotspot = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    fisher_trunc_brca = rbind(fisher_trunc_brca,
+                             c(test_fisher_trunc$estimate, as.numeric(test_fisher_trunc$conf.int), test_fisher_trunc$p.value))
+    fisher_amp_brca = rbind(fisher_amp_brca,
+                             c(test_fisher_amp$estimate, as.numeric(test_fisher_amp$conf.int), test_fisher_amp$p.value))
+    fisher_hotspot_brca = rbind(fisher_hotspot_brca,
+                             c(test_fisher_hotspot$estimate, as.numeric(test_fisher_hotspot$conf.int), test_fisher_hotspot$p.value))
+}
+colnames(fisher_trunc_brca) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_trunc_brca) = brca_coalt$Full_amp$Gene
+
+colnames(fisher_amp_brca) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_amp_brca) = brca_coalt$Full_amp$Gene
+
+colnames(fisher_hotspot_brca) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_hotspot_brca) = brca_coalt$Full_amp$Gene
+
+ind_gene = match(gene_order_brca, rownames(fisher_trunc_brca))
+fisher_trunc_brca = data.frame(fisher_trunc_brca[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+fisher_amp_brca = data.frame(fisher_amp_brca[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+fisher_hotspot_brca = data.frame(fisher_hotspot_brca[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+
+df_Fig3c = data.frame(gene = rownames(fisher_trunc_brca), E18_trunc = fisher_trunc_brca, Amp = fisher_amp_brca, Hotspot = fisher_hotspot_brca) %>% mutate(gene = factor(gene, levels = rev(gene)))
+p_E18 = ggplot(df_Fig3c, aes(x = log2(E18_trunc.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(E18_trunc.high.CI), xmin = log2(E18_trunc.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+   # coord_trans(x = scales::exp_trans(2)) +
+   # scale_x_continuous(breaks = log2(seq(0.1, 4.2, 0.5)), labels = seq(0.1, 4.2, 0.5), limits = log2(c(0.09, 4.2))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Log2(Odds ratio)") + ggtitle("E18 trunc")
+
+p_Amp = ggplot(df_Fig3c, aes(x = log2(Amp.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(Amp.high.CI), xmin = log2(Amp.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+   # coord_trans(x = scales::exp_trans(2)) +
+    #scale_x_continuous(breaks = log2(seq(0.1, 4.6, 0.5)), labels = seq(0.1, 4.6, 0.5), limits = log2(c(0.09, 4.6))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Log2(Odds ratio)") + ggtitle("Full Amp")
+
+p_Hotspot = ggplot(df_Fig3c, aes(x = log2(Hotspot.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(Hotspot.high.CI), xmin = log2(Hotspot.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+    #coord_trans(x = scales::exp_trans(2)) +
+    #scale_x_continuous(breaks = log2(seq(0.1, 9, 0.5)), labels = seq(0.1, 9, 0.5), limits = log2(c(0.09, 9))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Log2(Odds ratio)") + ggtitle("Hotspot Mut")
+
+Fig3c = p_E18 + p_Amp + p_Hotspot
+Fig3c 
+```
+
+# Ext Fig 10c
+Odd ratios of co-occurance in FGFR2 alt group vs FGFR2 WT group in pan cancer 
+```{r, fig.width = 10, fig.height =6}
+fisher_trunc_pancancer = c()
+fisher_amp_pancancer = c()
+fisher_hotspot_pancancer = c()
+for(i in 1:nrow(pancancer_coalt$Full_amp)){
+    # Full amp
+    a = as.numeric(pancancer_coalt$Full_amp$FGFR2.amp.count[i]) # both
+    b = as.numeric(pancancer_coalt$Full_amp$FGFR2.amp.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(pancancer_coalt$Full_amp$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(pancancer_coalt$Full_amp$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_amp = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    # E18 trunc
+    a = as.numeric(pancancer_coalt$E18_trunc$FGFR2.E18.trunc.count[i]) # both
+    b = as.numeric(pancancer_coalt$E18_trunc$FGFR2.E18.trunc.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(pancancer_coalt$E18_trunc$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(pancancer_coalt$E18_trunc$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_trunc = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    # hotspot
+    a = as.numeric(pancancer_coalt$hotspot$FGFR2.hotspot.count[i]) # both
+    b = as.numeric(pancancer_coalt$hotspot$FGFR2.hotspot.total[i]) - a # FGFR2 alt but not B
+    c = as.numeric(pancancer_coalt$hotspot$FGFR2.WT.count[i]) # not FGFR2 but B
+    d = as.numeric(pancancer_coalt$hotspot$FGFR2.WT.total[i]) - c # neither FGFR2 and B
+    test_fisher_hotspot = fisher.test(matrix(c(a,b,c,d), nrow = 2))
+
+    fisher_trunc_pancancer = rbind(fisher_trunc_pancancer,
+                             c(test_fisher_trunc$estimate, as.numeric(test_fisher_trunc$conf.int), test_fisher_trunc$p.value))
+    fisher_amp_pancancer = rbind(fisher_amp_pancancer,
+                             c(test_fisher_amp$estimate, as.numeric(test_fisher_amp$conf.int), test_fisher_amp$p.value))
+    fisher_hotspot_pancancer = rbind(fisher_hotspot_pancancer,
+                             c(test_fisher_hotspot$estimate, as.numeric(test_fisher_hotspot$conf.int), test_fisher_hotspot$p.value))
+}
+colnames(fisher_trunc_pancancer) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_trunc_pancancer) = pancancer_coalt$Full_amp$Gene
+
+colnames(fisher_amp_pancancer) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_amp_pancancer) = pancancer_coalt$Full_amp$Gene
+
+colnames(fisher_hotspot_pancancer) = c("Odds ratio", "low CI", "high CI", "P.value")
+rownames(fisher_hotspot_pancancer) = pancancer_coalt$Full_amp$Gene
+
+ind_gene = match(gene_order_pan, rownames(fisher_trunc_pancancer))
+fisher_trunc_pancancer = data.frame(fisher_trunc_pancancer[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+fisher_amp_pancancer = data.frame(fisher_amp_pancancer[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+fisher_hotspot_pancancer = data.frame(fisher_hotspot_pancancer[ind_gene,]) %>% mutate(FDR = p.adjust(P.value, "BH"))
+
+df_Ext_Fig10c = data.frame(gene = rownames(fisher_trunc_pancancer), E18_trunc = fisher_trunc_pancancer, Amp = fisher_amp_pancancer, Hotspot = fisher_hotspot_pancancer) %>% mutate(gene = factor(gene, levels = rev(gene)))
+
+p_E18 = ggplot(df_Ext_Fig10c, aes(x = log2(E18_trunc.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(E18_trunc.high.CI), xmin = log2(E18_trunc.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+    coord_trans(x = scales::exp_trans(2)) +
+    scale_x_continuous(breaks = log2(seq(0.1, 4.5, 0.5)), labels = seq(0.1, 4.5, 0.5), limits = log2(c(0.09, 4.5))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Odds ratio") + ggtitle("E18 trunc")
+
+p_Amp = ggplot(df_Ext_Fig10c, aes(x = log2(Amp.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(Amp.high.CI), xmin = log2(Amp.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+    coord_trans(x = scales::exp_trans(2)) +
+    scale_x_continuous(breaks = log2(seq(0.1, 4.6, 0.5)), labels = seq(0.1, 4.6, 0.5), limits = log2(c(0.09, 4.6))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Odds ratio") + ggtitle("Full Amp")
+
+p_Hotspot = ggplot(df_Ext_Fig10c, aes(x = log2(Hotspot.Odds.ratio), y = gene)) + 
+    geom_vline(aes(xintercept = 0), size = 0.25, linetype = "dashed") +
+    geom_errorbarh(aes(xmax = log2(Hotspot.high.CI), xmin = log2(Hotspot.low.CI)), size = 0.5, height = 0.2, color = "gray50") +
+    geom_point(size = 3.5, color = "orange") + 
+    coord_trans(x = scales::exp_trans(2)) +
+    scale_x_continuous(breaks = log2(seq(0.1, 9, 0.5)), labels = seq(0.1, 9, 0.5), limits = log2(c(0.09, 9))) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank()) +
+    ylab("") + xlab("Odds ratio") + ggtitle("Hotspot Mut")
+
+Ext_Fig10c = p_E18 + p_Amp + p_Hotspot
+Ext_Fig10c
+```
+
+# source data
+```{r}
+xlsx::write.xlsx2(df_Fig2a, "~/FGFR/Daniel/R/Nature_figures/sources/FM_Fig2.xlsx", sheetName = "Fig2a", row.names = F)
+
+xlsx::write.xlsx2(df_Fig3a, "~/FGFR/Daniel/R/Nature_figures/sources/FM_Fig3.xlsx", sheetName = "Fig3a", row.names = F)
+xlsx::write.xlsx2(df_Fig3b, "~/FGFR/Daniel/R/Nature_figures/sources/FM_Fig3.xlsx", sheetName = "Fig3b", row.names = F, append = T)
+xlsx::write.xlsx2(df_Fig3c, "~/FGFR/Daniel/R/Nature_figures/sources/FM_Fig3.xlsx", sheetName = "Fig3c", row.names = F, append = T)
+
+xlsx::write.xlsx2(df_Ext_Fig10a, "~/FGFR/Daniel/R/Nature_figures/sources/FM_ExtFig10.xlsx", sheetName = "Ext_Fig.10a", row.names = F)
+xlsx::write.xlsx2(df_Ext_Fig10b, "~/FGFR/Daniel/R/Nature_figures/sources/FM_ExtFig10.xlsx", sheetName = "Ext_Fig.10b", row.names = F, append = T)
+xlsx::write.xlsx2(df_Ext_Fig10c, "~/FGFR/Daniel/R/Nature_figures/sources/FM_ExtFig10.xlsx", sheetName = "Ext_Fig.10c", row.names = F, append = T)
+xlsx::write.xlsx2(df_Ext_Fig10e, "~/FGFR/Daniel/R/Nature_figures/sources/FM_ExtFig10.xlsx", sheetName = "Ext_Fig.10e", row.names = F, append = T)
+```
+
+
